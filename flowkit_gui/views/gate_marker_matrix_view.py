@@ -15,12 +15,24 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QAbstractItemView, QStyle, QStyleOptionButton,
     QStyledItemDelegate, QScrollBar, QFrame, QSizePolicy
 )
-from PyQt5.QtGui import QPainter, QFont, QColor, QBrush, QPen, QWheelEvent, QKeyEvent
+from PyQt5.QtGui import QPainter, QFont, QColor, QBrush, QPen, QWheelEvent, QKeyEvent, QMouseEvent
 
 from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
 from ..utils.logging_config import get_logger
 
 logger = get_logger("gate_marker_matrix_view")
+
+# Okabe-Ito colorblind-friendly palette for depth indicators
+# Each position in hierarchy gets a sequential color, cycling for deep hierarchies
+DEPTH_COLORS = [
+    "#CC79A7",  # 1st dot - reddish purple/pink
+    "#D55E00",  # 2nd dot - vermillion/orange
+    "#E79F00",  # 3rd dot - amber/orange
+    "#F0E441",  # 4th dot - yellow
+    "#019E73",  # 5th dot - bluish green/teal
+    "#57B4E9",  # 6th dot - sky blue
+    "#0072B2",  # 7th dot - blue (then cycles back to 1st)
+]
 
 
 class RotatedHeaderView(QHeaderView):
@@ -42,7 +54,7 @@ class RotatedHeaderView(QHeaderView):
         return base
 
     def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int) -> None:
-        """Paint section with rotated text for horizontal headers."""
+        """Paint section with rotated text and colored dot for horizontal headers."""
         if self.orientation() != Qt.Horizontal:
             super().paintSection(painter, rect, logicalIndex)
             return
@@ -68,22 +80,160 @@ class RotatedHeaderView(QHeaderView):
                                   rect.y() + rect.height() - 5)
                 painter.rotate(-90)
 
-                # Draw text
+                # Draw colored dot for this column (cycles through palette)
+                dot_color = QColor(DEPTH_COLORS[logicalIndex % len(DEPTH_COLORS)])
+                dot_size = 8
+                dot_margin = 4
+                painter.setBrush(QBrush(dot_color))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(0, -dot_size // 2, dot_size, dot_size)
+
+                # Draw text offset after dot
+                text_offset = dot_size + dot_margin
                 font = painter.font()
                 font.setPointSize(9)
                 painter.setFont(font)
                 painter.setPen(self.palette().text().color())
 
                 # Calculate text rect (width becomes height after rotation)
-                text_rect = QRect(0, -rect.width() // 2, rect.height() - 10, rect.width())
+                text_rect = QRect(text_offset, -rect.width() // 2, rect.height() - 10 - text_offset, rect.width())
                 painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(text))
 
         painter.restore()
 
 
+class ColoredDepthHeaderView(QHeaderView):
+    """
+    Custom vertical header view that displays colored depth dots before gate names.
+
+    Uses the Okabe-Ito colorblind-friendly palette where each position in the
+    hierarchy gets a distinct color: depth 3 shows pink + orange + amber dots.
+    """
+
+    def __init__(self, orientation: Qt.Orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._dot_size = 8
+        self._dot_spacing = 2
+        self._text_margin = 6
+
+        # Width resizing state (for vertical headers only)
+        self._drag_start_x = None
+        self._drag_start_width = None
+        self._min_width = 80
+        self._max_width = 400
+        self.setMouseTracking(True)
+
+    def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int) -> None:
+        """Paint section with colored depth dots and gate name."""
+        if self.orientation() != Qt.Vertical:
+            super().paintSection(painter, rect, logicalIndex)
+            return
+
+        painter.save()
+
+        # Draw background using theme-aware palette
+        painter.fillRect(rect, self.palette().window())
+
+        # Draw borders
+        painter.setPen(QPen(self.palette().mid().color()))
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        painter.drawLine(rect.topRight(), rect.bottomRight())
+
+        # Get gate name and depth from model
+        model = self.model()
+        if model:
+            gate_name = model.headerData(logicalIndex, Qt.Vertical, Qt.DisplayRole)
+            depth = model.headerData(logicalIndex, Qt.Vertical, Qt.UserRole)
+
+            if gate_name is not None:
+                # Calculate starting position for dots
+                x_pos = rect.x() + 6
+                y_center = rect.y() + rect.height() // 2
+
+                # Draw colored depth dots
+                if depth and depth > 0:
+                    for i in range(depth):
+                        # Get color for this position (cycle through palette)
+                        color_idx = i % len(DEPTH_COLORS)
+                        dot_color = QColor(DEPTH_COLORS[color_idx])
+
+                        # Draw filled circle
+                        painter.setBrush(QBrush(dot_color))
+                        painter.setPen(Qt.NoPen)
+                        dot_x = x_pos + i * (self._dot_size + self._dot_spacing)
+                        dot_y = y_center - self._dot_size // 2
+                        painter.drawEllipse(dot_x, dot_y, self._dot_size, self._dot_size)
+
+                    # Update x position for text
+                    x_pos += depth * (self._dot_size + self._dot_spacing) + self._text_margin
+
+                # Draw gate name text using theme-aware color
+                font = painter.font()
+                font.setPointSize(9)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(self.palette().text().color())
+
+                text_rect = QRect(
+                    x_pos,
+                    rect.y(),
+                    rect.width() - x_pos + rect.x() - 4,
+                    rect.height()
+                )
+                painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(gate_name))
+
+        painter.restore()
+
+    def sizeHint(self) -> QSize:
+        """Return size hint with extra width for depth dots."""
+        base = super().sizeHint()
+        # Add extra width to accommodate dots (assume max depth of 7)
+        max_dots_width = 7 * (self._dot_size + self._dot_spacing) + self._text_margin
+        return QSize(base.width() + max_dots_width, base.height())
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Start width resize if clicking near right edge of vertical header."""
+        if self.orientation() == Qt.Vertical and event.x() >= self.width() - 5:
+            self._drag_start_x = event.globalX()
+            self._drag_start_width = self.width()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Handle resize cursor display and width dragging."""
+        if self.orientation() == Qt.Vertical:
+            if self._drag_start_x is not None:
+                # Currently dragging - calculate new width
+                delta = event.globalX() - self._drag_start_x
+                new_width = self._drag_start_width + delta
+                new_width = max(self._min_width, min(self._max_width, new_width))
+                self.setFixedWidth(new_width)
+                event.accept()
+                return
+            elif event.x() >= self.width() - 5:
+                # Hovering near edge - show resize cursor
+                self.setCursor(Qt.SizeHorCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """End width resize drag operation."""
+        if self._drag_start_x is not None:
+            self._drag_start_x = None
+            self._drag_start_width = None
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+
 class CheckboxDelegate(QStyledItemDelegate):
     """
-    Delegate that renders checkboxes centered in cells.
+    Delegate that renders colored checkboxes centered in cells.
+    Each column gets a color from the Okabe-Ito palette, cycling through.
     """
 
     def __init__(self, parent=None):
@@ -91,7 +241,7 @@ class CheckboxDelegate(QStyledItemDelegate):
         self._checkbox_size = 16
 
     def paint(self, painter: QPainter, option, index) -> None:
-        """Paint a centered checkbox."""
+        """Paint a centered colored checkbox matching the column color."""
         painter.save()
 
         # Draw cell background
@@ -104,25 +254,36 @@ class CheckboxDelegate(QStyledItemDelegate):
         check_state = index.data(Qt.CheckStateRole)
         is_checked = check_state == Qt.Checked
 
+        # Get column color from palette (cycles through 7 colors)
+        col_color = QColor(DEPTH_COLORS[index.column() % len(DEPTH_COLORS)])
+
         # Calculate checkbox rect (centered)
         checkbox_rect = QRect(0, 0, self._checkbox_size, self._checkbox_size)
         checkbox_rect.moveCenter(option.rect.center())
 
-        # Draw checkbox
-        style_option = QStyleOptionButton()
-        style_option.rect = checkbox_rect
-        style_option.state = QStyle.State_Enabled
-        if is_checked:
-            style_option.state |= QStyle.State_On
-        else:
-            style_option.state |= QStyle.State_Off
+        # Enable anti-aliasing for smoother rendering
+        painter.setRenderHint(QPainter.Antialiasing, True)
 
-        # Use the widget's style to draw the checkbox
-        widget = option.widget
-        if widget:
-            widget.style().drawControl(QStyle.CE_CheckBox, style_option, painter, widget)
+        if is_checked:
+            # Filled box with white checkmark
+            painter.setBrush(QBrush(col_color))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(checkbox_rect, 3, 3)
+
+            # Draw white checkmark
+            painter.setPen(QPen(Qt.white, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            # Checkmark path: starts bottom-left of check, goes to bottom point, then up-right
+            x, y = checkbox_rect.x(), checkbox_rect.y()
+            w, h = checkbox_rect.width(), checkbox_rect.height()
+            painter.drawLine(x + 3, y + h // 2, x + w // 2 - 1, y + h - 4)
+            painter.drawLine(x + w // 2 - 1, y + h - 4, x + w - 3, y + 4)
         else:
-            QApplication.style().drawControl(QStyle.CE_CheckBox, style_option, painter)
+            # Border only
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(col_color, 2))
+            # Inset rect slightly to account for pen width
+            inset_rect = checkbox_rect.adjusted(1, 1, -1, -1)
+            painter.drawRoundedRect(inset_rect, 2, 2)
 
         painter.restore()
 
@@ -171,9 +332,9 @@ class GateMarkerMatrixView(QWidget):
         toolbar = self._create_toolbar()
         layout.addWidget(toolbar)
 
-        # Info label
+        # Info label - styled via QSS using object name
         self._info_label = QLabel("Load a workspace to see gates and markers")
-        self._info_label.setStyleSheet("color: #666; font-style: italic;")
+        self._info_label.setObjectName("matrixInfoLabel")
         layout.addWidget(self._info_label)
 
         # Table view
@@ -184,47 +345,37 @@ class GateMarkerMatrixView(QWidget):
         # Use custom rotated header for columns
         self._table_view.setHorizontalHeader(RotatedHeaderView(Qt.Horizontal, self._table_view))
 
-        # Set up vertical header (row headers - gate names)
+        # Use custom colored depth header for rows (gate names with colored dots)
+        colored_header = ColoredDepthHeaderView(Qt.Vertical, self._table_view)
+        self._table_view.setVerticalHeader(colored_header)
         v_header = self._table_view.verticalHeader()
         v_header.setVisible(True)
         v_header.setDefaultSectionSize(self._base_cell_size)
         v_header.setSectionResizeMode(QHeaderView.Fixed)
+        v_header.setSectionsClickable(True)
         v_header.sectionClicked.connect(self._on_row_header_clicked)
 
         # Set up horizontal header
         h_header = self._table_view.horizontalHeader()
         h_header.setDefaultSectionSize(self._base_cell_size)
         h_header.setSectionResizeMode(QHeaderView.Fixed)
+        h_header.setSectionsClickable(True)
         h_header.sectionClicked.connect(self._on_column_header_clicked)
 
         # Use checkbox delegate
         self._delegate = CheckboxDelegate(self._table_view)
         self._table_view.setItemDelegate(self._delegate)
 
-        # Style the table
+        # Style the table - use object name for theme-aware QSS styling
         self._table_view.setShowGrid(True)
         self._table_view.setGridStyle(Qt.SolidLine)
-        self._table_view.setStyleSheet("""
-            QTableView {
-                gridline-color: #ddd;
-                background-color: white;
-            }
-            QTableView::item {
-                padding: 0px;
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 4px;
-                border: 1px solid #ddd;
-                font-weight: bold;
-            }
-        """)
+        self._table_view.setObjectName("gateMarkerMatrix")
 
         layout.addWidget(self._table_view, 1)
 
-        # Selection summary
+        # Selection summary - styled via QSS using object name
         self._summary_label = QLabel("No selections")
-        self._summary_label.setStyleSheet("color: #666;")
+        self._summary_label.setObjectName("matrixSummaryLabel")
         layout.addWidget(self._summary_label)
 
     def _create_toolbar(self) -> QWidget:
@@ -273,9 +424,9 @@ class GateMarkerMatrixView(QWidget):
 
         layout.addStretch()
 
-        # Help text
+        # Help text - styled via QSS using object name
         help_label = QLabel("Click row/column headers to select entire row/column")
-        help_label.setStyleSheet("color: #888; font-size: 11px;")
+        help_label.setObjectName("matrixHelpLabel")
         layout.addWidget(help_label)
 
         return toolbar
@@ -287,6 +438,7 @@ class GateMarkerMatrixView(QWidget):
 
         # Connect to model signals
         model.selectionChanged.connect(self._update_summary)
+        model.modelReset.connect(self._update_info_label)
 
         # Update zoom
         self._apply_zoom()

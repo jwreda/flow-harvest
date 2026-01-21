@@ -98,6 +98,29 @@ class GateInfo:
         """Returns hierarchy depth (0 = root)"""
         return len(self.path) - 1
 
+    @property
+    def bullet_prefix(self) -> str:
+        """Returns bullet prefix for this depth (e.g., '●●●' for depth 3)."""
+        return "●" * self.depth
+
+    @property
+    def compact_display(self) -> str:
+        """Returns compact display: ●●●CD4+ for depth 3 gate named CD4+."""
+        if self.depth == 0:
+            return self.name
+        return f"{'●' * self.depth}{self.name}"
+
+    @property
+    def hierarchical_path_string(self) -> str:
+        """Returns 'Live, ●CD45+, ●●CD3+, ●●●CD4+CD8-' format."""
+        parts = []
+        for i, gate_name in enumerate(self.path):
+            if i == 0:
+                parts.append(gate_name)
+            else:
+                parts.append(f"{'●' * i}{gate_name}")
+        return ", ".join(parts)
+
 
 @dataclass
 class ChannelInfo:

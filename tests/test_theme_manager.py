@@ -95,8 +95,10 @@ class TestThemeManager:
 
         manager.theme_changed.connect(on_theme_changed)
 
-        # Set light mode from system - should emit
-        manager.set_mode(ThemeMode.SYSTEM)
+        # Start from known state (LIGHT), then switch to DARK
+        # This ensures deterministic behavior regardless of system dark mode setting
+        manager.set_mode(ThemeMode.LIGHT)
+        received_themes.clear()  # Clear any signal from initial set
         manager.set_mode(ThemeMode.DARK)
 
         assert "dark" in received_themes

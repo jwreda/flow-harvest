@@ -238,6 +238,39 @@ QHeaderView::section:last {{
     border-top-right-radius: 6px;
 }}
 
+/* ===== Gate Marker Matrix ===== */
+QTableView#gateMarkerMatrix {{
+    background-color: {surface};
+    gridline-color: {border};
+}}
+
+QTableView#gateMarkerMatrix::item {{
+    padding: 0px;
+}}
+
+QTableView#gateMarkerMatrix QHeaderView::section {{
+    background-color: {surface};
+    color: {text_primary};
+    padding: 4px;
+    border: 1px solid {border};
+    font-weight: bold;
+}}
+
+/* Matrix info/summary/help labels */
+QLabel#matrixInfoLabel {{
+    color: {text_secondary};
+    font-style: italic;
+}}
+
+QLabel#matrixSummaryLabel {{
+    color: {text_secondary};
+}}
+
+QLabel#matrixHelpLabel {{
+    color: {text_secondary};
+    font-size: 11px;
+}}
+
 /* ===== Checkboxes ===== */
 QCheckBox {{
     spacing: 8px;

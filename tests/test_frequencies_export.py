@@ -214,9 +214,9 @@ class TestCountsSheets:
 
         headers = [ws.cell(1, i).value for i in range(1, ws.max_column + 1)]
         assert "Cells_count" in headers
-        assert "Cells/Live_count" in headers
+        assert "Cells, ●Live_count" in headers
         assert "Cells_%parent" not in headers
-        assert "Cells/Live_%parent" not in headers
+        assert "Cells, ●Live_%parent" not in headers
 
 
 class TestFrequencyWideSheets:
@@ -320,17 +320,17 @@ class TestFrequencyWideSheets:
         ws_counts = wb["Counts_All"]
         counts_headers = [ws_counts.cell(1, i).value for i in range(1, ws_counts.max_column + 1)]
         assert "Cells_count" in counts_headers
-        assert "Cells/Live_count" in counts_headers
+        assert "Cells, ●Live_count" in counts_headers
         assert "Cells_%parent" not in counts_headers
-        assert "Cells/Live_%parent" not in counts_headers
+        assert "Cells, ●Live_%parent" not in counts_headers
 
         # Check Frequencies_All has only percent columns
         ws_freq = wb["Frequencies_All"]
         freq_headers = [ws_freq.cell(1, i).value for i in range(1, ws_freq.max_column + 1)]
         assert "Cells_%parent" in freq_headers
-        assert "Cells/Live_%parent" in freq_headers
+        assert "Cells, ●Live_%parent" in freq_headers
         assert "Cells_count" not in freq_headers
-        assert "Cells/Live_count" not in freq_headers
+        assert "Cells, ●Live_count" not in freq_headers
 
     def test_frequencies_wide_data_values(self, tmp_path):
         """Test that wide format has correct data values in separate sheets."""
@@ -821,14 +821,14 @@ class TestStatisticsModelFrequencies:
         assert "sample_name" in df.columns
         assert "Cells_count" in df.columns
         assert "Cells_%parent" in df.columns
-        assert "Cells/Live_count" in df.columns
-        assert "Cells/Live_%parent" in df.columns
+        assert "Cells, ●Live_count" in df.columns
+        assert "Cells, ●Live_%parent" in df.columns
 
         # Check values
         assert df.iloc[0]["Cells_count"] == 8000
         assert df.iloc[0]["Cells_%parent"] == 80.0
-        assert df.iloc[0]["Cells/Live_count"] == 6000
-        assert df.iloc[0]["Cells/Live_%parent"] == 75.0
+        assert df.iloc[0]["Cells, ●Live_count"] == 6000
+        assert df.iloc[0]["Cells, ●Live_%parent"] == 75.0
 
     def test_calculate_frequencies_wide_counts_only(self):
         """Test wide format frequency calculation with counts only."""

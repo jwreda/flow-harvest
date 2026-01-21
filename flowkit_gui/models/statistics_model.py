@@ -317,10 +317,10 @@ class StatisticsModel:
         """Generate wide format frequency DataFrame (one row per sample)."""
         rows = []
 
-        # Build gate path lookup for column naming
+        # Build gate path lookup for column naming (using hierarchical bullet notation)
         gate_paths = {}
         for gate_info in self._workspace.gates:
-            gate_paths[gate_info.gate_id] = gate_info.full_path_string
+            gate_paths[gate_info.gate_id] = gate_info.hierarchical_path_string
 
         # Use included samples if available, else all samples
         samples = getattr(self, '_included_samples', self._workspace.samples)
@@ -370,10 +370,10 @@ class StatisticsModel:
         """Generate tidy format frequency DataFrame (one row per gate per sample)."""
         rows = []
 
-        # Build gate path lookup
+        # Build gate path lookup (using hierarchical bullet notation)
         gate_paths = {}
         for gate_info in self._workspace.gates:
-            gate_paths[gate_info.gate_id] = gate_info.full_path_string
+            gate_paths[gate_info.gate_id] = gate_info.hierarchical_path_string
 
         # Use included samples if available, else all samples
         samples = getattr(self, '_included_samples', self._workspace.samples)

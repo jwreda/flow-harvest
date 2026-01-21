@@ -33,8 +33,8 @@ class GateMarkerMatrixModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Gate info: list of (gate_id, gate_display_name)
-        self._gates: List[Tuple[str, str]] = []
+        # Gate info: list of (gate_id, gate_name, depth)
+        self._gates: List[Tuple[str, str, int]] = []
 
         # Marker info: list of (channel, display_name)
         self._markers: List[Tuple[str, str]] = []
@@ -56,7 +56,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         """
         self.beginResetModel()
 
-        self._gates = [(g.gate_id, g.full_path_string) for g in gates]
+        self._gates = [(g.gate_id, g.name, g.depth) for g in gates]
         self._markers = [(m.pnn_label, m.display_name) for m in markers]
         self._selections.clear()
 
@@ -89,14 +89,13 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         if col < 0 or col >= len(self._markers):
             return None
 
-        gate_id, _ = self._gates[row]
+        gate_id, gate_name, _ = self._gates[row]
         channel, _ = self._markers[col]
 
         if role == Qt.CheckStateRole:
             return Qt.Checked if (gate_id, channel) in self._selections else Qt.Unchecked
 
         if role == Qt.ToolTipRole:
-            _, gate_name = self._gates[row]
             _, marker_name = self._markers[col]
             selected = "Selected" if (gate_id, channel) in self._selections else "Not selected"
             return f"{marker_name} MFI for {gate_name}\n{selected}"
@@ -116,7 +115,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         if col < 0 or col >= len(self._markers):
             return False
 
-        gate_id, _ = self._gates[row]
+        gate_id, _, _ = self._gates[row]
         channel, _ = self._markers[col]
         key = (gate_id, channel)
 
@@ -149,17 +148,22 @@ class GateMarkerMatrixModel(QAbstractTableModel):
                     _, display_name = self._markers[section]
                     return display_name
             else:
-                # Row headers = gate names
+                # Row headers = gate names (without depth dots - custom header paints those)
                 if 0 <= section < len(self._gates):
-                    _, gate_name = self._gates[section]
+                    _, gate_name, _ = self._gates[section]
                     return gate_name
+        elif role == Qt.UserRole:
+            # Return depth for vertical headers (used by ColoredDepthHeaderView)
+            if orientation == Qt.Vertical and 0 <= section < len(self._gates):
+                _, _, depth = self._gates[section]
+                return depth
         elif role == Qt.ToolTipRole:
             if orientation == Qt.Horizontal and 0 <= section < len(self._markers):
                 channel, display_name = self._markers[section]
                 return f"{display_name}\nChannel: {channel}"
             elif orientation == Qt.Vertical and 0 <= section < len(self._gates):
-                gate_id, gate_name = self._gates[section]
-                return f"{gate_name}\nID: {gate_id}"
+                gate_id, gate_name, depth = self._gates[section]
+                return f"{gate_name}\nDepth: {depth}\nFull path: {gate_id}\nClick to toggle entire row"
         return None
 
     # Selection manipulation methods
@@ -181,7 +185,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
     def select_row(self, row: int) -> None:
         """Select all markers for a gate (entire row)."""
         if 0 <= row < len(self._gates):
-            gate_id, _ = self._gates[row]
+            gate_id, _, _ = self._gates[row]
             for channel, _ in self._markers:
                 self._selections.add((gate_id, channel))
             self._emit_row_changed(row)
@@ -190,7 +194,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
     def deselect_row(self, row: int) -> None:
         """Deselect all markers for a gate (entire row)."""
         if 0 <= row < len(self._gates):
-            gate_id, _ = self._gates[row]
+            gate_id, _, _ = self._gates[row]
             for channel, _ in self._markers:
                 self._selections.discard((gate_id, channel))
             self._emit_row_changed(row)
@@ -199,7 +203,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
     def toggle_row(self, row: int) -> None:
         """Toggle entire row - if any selected, deselect all; otherwise select all."""
         if 0 <= row < len(self._gates):
-            gate_id, _ = self._gates[row]
+            gate_id, _, _ = self._gates[row]
             # Check if any in this row are selected
             any_selected = any(
                 (gate_id, channel) in self._selections
@@ -214,7 +218,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         """Select all gates for a marker (entire column)."""
         if 0 <= col < len(self._markers):
             channel, _ = self._markers[col]
-            for gate_id, _ in self._gates:
+            for gate_id, _, _ in self._gates:
                 self._selections.add((gate_id, channel))
             self._emit_column_changed(col)
             self.selectionChanged.emit()
@@ -223,7 +227,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         """Deselect all gates for a marker (entire column)."""
         if 0 <= col < len(self._markers):
             channel, _ = self._markers[col]
-            for gate_id, _ in self._gates:
+            for gate_id, _, _ in self._gates:
                 self._selections.discard((gate_id, channel))
             self._emit_column_changed(col)
             self.selectionChanged.emit()
@@ -234,7 +238,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
             channel, _ = self._markers[col]
             any_selected = any(
                 (gate_id, channel) in self._selections
-                for gate_id, _ in self._gates
+                for gate_id, _, _ in self._gates
             )
             if any_selected:
                 self.deselect_column(col)
@@ -246,7 +250,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         self.beginResetModel()
         self._selections = set(
             (gate_id, channel)
-            for gate_id, _ in self._gates
+            for gate_id, _, _ in self._gates
             for channel, _ in self._markers
         )
         self.endResetModel()
@@ -316,7 +320,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
 
     def _emit_data_changed_for_cell(self, gate_id: str, channel: str) -> None:
         """Emit dataChanged for a specific cell."""
-        row = next((i for i, (gid, _) in enumerate(self._gates) if gid == gate_id), -1)
+        row = next((i for i, (gid, _, _) in enumerate(self._gates) if gid == gate_id), -1)
         col = next((i for i, (ch, _) in enumerate(self._markers) if ch == channel), -1)
         if row >= 0 and col >= 0:
             idx = self.index(row, col)
