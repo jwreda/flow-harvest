@@ -44,6 +44,15 @@ class RotatedHeaderView(QHeaderView):
         super().__init__(orientation, parent)
         self.setDefaultAlignment(Qt.AlignCenter)
         self._min_section_size = 24
+        self._zoom_level = 1.0
+        self._base_dot_size = 8
+        self._base_dot_margin = 4
+        self._base_font_size = 9
+
+    def set_zoom_level(self, zoom: float) -> None:
+        """Set the zoom level for scaling text and dot sizes."""
+        self._zoom_level = zoom
+        self.viewport().update()
 
     def sizeHint(self) -> QSize:
         """Return size hint with extra height for rotated text."""
@@ -75,6 +84,11 @@ class RotatedHeaderView(QHeaderView):
         if model:
             text = model.headerData(logicalIndex, Qt.Horizontal, Qt.DisplayRole)
             if text:
+                # Calculate scaled sizes
+                dot_size = int(self._base_dot_size * self._zoom_level)
+                dot_margin = int(self._base_dot_margin * self._zoom_level)
+                font_size = max(6, int(self._base_font_size * self._zoom_level))
+
                 # Rotate painter for vertical text
                 painter.translate(rect.x() + rect.width() / 2,
                                   rect.y() + rect.height() - 5)
@@ -82,8 +96,6 @@ class RotatedHeaderView(QHeaderView):
 
                 # Draw colored dot for this column (cycles through palette)
                 dot_color = QColor(DEPTH_COLORS[logicalIndex % len(DEPTH_COLORS)])
-                dot_size = 8
-                dot_margin = 4
                 painter.setBrush(QBrush(dot_color))
                 painter.setPen(Qt.NoPen)
                 painter.drawEllipse(0, -dot_size // 2, dot_size, dot_size)
@@ -91,7 +103,7 @@ class RotatedHeaderView(QHeaderView):
                 # Draw text offset after dot
                 text_offset = dot_size + dot_margin
                 font = painter.font()
-                font.setPointSize(9)
+                font.setPointSize(font_size)
                 painter.setFont(font)
                 painter.setPen(self.palette().text().color())
 
@@ -113,9 +125,13 @@ class ColoredDepthHeaderView(QHeaderView):
     def __init__(self, orientation: Qt.Orientation, parent=None):
         super().__init__(orientation, parent)
         self.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._dot_size = 8
-        self._dot_spacing = 2
-        self._text_margin = 6
+
+        # Base sizes (will be scaled by zoom level)
+        self._base_dot_size = 8
+        self._base_dot_spacing = 2
+        self._base_text_margin = 6
+        self._base_font_size = 9
+        self._zoom_level = 1.0
 
         # Width resizing state (for vertical headers only)
         self._drag_start_x = None
@@ -124,6 +140,11 @@ class ColoredDepthHeaderView(QHeaderView):
         self._max_width = 400
         self.setMouseTracking(True)
 
+    def set_zoom_level(self, zoom: float) -> None:
+        """Set the zoom level for scaling text and dot sizes."""
+        self._zoom_level = zoom
+        self.viewport().update()
+
     def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int) -> None:
         """Paint section with colored depth dots and gate name."""
         if self.orientation() != Qt.Vertical:
@@ -131,6 +152,12 @@ class ColoredDepthHeaderView(QHeaderView):
             return
 
         painter.save()
+
+        # Calculate scaled sizes
+        dot_size = int(self._base_dot_size * self._zoom_level)
+        dot_spacing = int(self._base_dot_spacing * self._zoom_level)
+        text_margin = int(self._base_text_margin * self._zoom_level)
+        font_size = max(6, int(self._base_font_size * self._zoom_level))
 
         # Draw background using theme-aware palette
         painter.fillRect(rect, self.palette().window())
@@ -161,16 +188,16 @@ class ColoredDepthHeaderView(QHeaderView):
                         # Draw filled circle
                         painter.setBrush(QBrush(dot_color))
                         painter.setPen(Qt.NoPen)
-                        dot_x = x_pos + i * (self._dot_size + self._dot_spacing)
-                        dot_y = y_center - self._dot_size // 2
-                        painter.drawEllipse(dot_x, dot_y, self._dot_size, self._dot_size)
+                        dot_x = x_pos + i * (dot_size + dot_spacing)
+                        dot_y = y_center - dot_size // 2
+                        painter.drawEllipse(dot_x, dot_y, dot_size, dot_size)
 
                     # Update x position for text
-                    x_pos += depth * (self._dot_size + self._dot_spacing) + self._text_margin
+                    x_pos += depth * (dot_size + dot_spacing) + text_margin
 
                 # Draw gate name text using theme-aware color
                 font = painter.font()
-                font.setPointSize(9)
+                font.setPointSize(font_size)
                 font.setBold(True)
                 painter.setFont(font)
                 painter.setPen(self.palette().text().color())
@@ -188,8 +215,11 @@ class ColoredDepthHeaderView(QHeaderView):
     def sizeHint(self) -> QSize:
         """Return size hint with extra width for depth dots."""
         base = super().sizeHint()
-        # Add extra width to accommodate dots (assume max depth of 7)
-        max_dots_width = 7 * (self._dot_size + self._dot_spacing) + self._text_margin
+        # Add extra width to accommodate dots (assume max depth of 7), scaled by zoom
+        dot_size = int(self._base_dot_size * self._zoom_level)
+        dot_spacing = int(self._base_dot_spacing * self._zoom_level)
+        text_margin = int(self._base_text_margin * self._zoom_level)
+        max_dots_width = 7 * (dot_size + dot_spacing) + text_margin
         return QSize(base.width() + max_dots_width, base.height())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -238,7 +268,12 @@ class CheckboxDelegate(QStyledItemDelegate):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._checkbox_size = 16
+        self._base_checkbox_size = 16
+        self._zoom_level = 1.0
+
+    def set_zoom_level(self, zoom: float) -> None:
+        """Set the zoom level for scaling checkbox size."""
+        self._zoom_level = zoom
 
     def paint(self, painter: QPainter, option, index) -> None:
         """Paint a centered colored checkbox matching the column color."""
@@ -257,9 +292,15 @@ class CheckboxDelegate(QStyledItemDelegate):
         # Get column color from palette (cycles through 7 colors)
         col_color = QColor(DEPTH_COLORS[index.column() % len(DEPTH_COLORS)])
 
-        # Calculate checkbox rect (centered)
-        checkbox_rect = QRect(0, 0, self._checkbox_size, self._checkbox_size)
+        # Calculate scaled checkbox size
+        checkbox_size = int(self._base_checkbox_size * self._zoom_level)
+        checkbox_rect = QRect(0, 0, checkbox_size, checkbox_size)
         checkbox_rect.moveCenter(option.rect.center())
+
+        # Scale other dimensions
+        corner_radius = max(1, int(3 * self._zoom_level))
+        pen_width = max(1, int(2 * self._zoom_level))
+        inset = max(1, int(3 * self._zoom_level))
 
         # Enable anti-aliasing for smoother rendering
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -268,22 +309,22 @@ class CheckboxDelegate(QStyledItemDelegate):
             # Filled box with white checkmark
             painter.setBrush(QBrush(col_color))
             painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(checkbox_rect, 3, 3)
+            painter.drawRoundedRect(checkbox_rect, corner_radius, corner_radius)
 
-            # Draw white checkmark
-            painter.setPen(QPen(Qt.white, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            # Checkmark path: starts bottom-left of check, goes to bottom point, then up-right
+            # Draw white checkmark (scaled)
+            painter.setPen(QPen(Qt.white, pen_width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             x, y = checkbox_rect.x(), checkbox_rect.y()
             w, h = checkbox_rect.width(), checkbox_rect.height()
-            painter.drawLine(x + 3, y + h // 2, x + w // 2 - 1, y + h - 4)
-            painter.drawLine(x + w // 2 - 1, y + h - 4, x + w - 3, y + 4)
+            # Checkmark path scaled proportionally
+            painter.drawLine(x + inset, y + h // 2, x + w // 2 - 1, y + h - inset - 1)
+            painter.drawLine(x + w // 2 - 1, y + h - inset - 1, x + w - inset, y + inset + 1)
         else:
             # Border only
             painter.setBrush(Qt.NoBrush)
-            painter.setPen(QPen(col_color, 2))
+            painter.setPen(QPen(col_color, pen_width))
             # Inset rect slightly to account for pen width
             inset_rect = checkbox_rect.adjusted(1, 1, -1, -1)
-            painter.drawRoundedRect(inset_rect, 2, 2)
+            painter.drawRoundedRect(inset_rect, max(1, corner_radius - 1), max(1, corner_radius - 1))
 
         painter.restore()
 
@@ -506,7 +547,7 @@ class GateMarkerMatrixView(QWidget):
         self._apply_zoom()
 
     def _apply_zoom(self) -> None:
-        """Apply current zoom level to cell sizes."""
+        """Apply current zoom level to cell sizes and all components."""
         cell_size = int(self._base_cell_size * self._zoom_level)
 
         # Update row heights
@@ -516,6 +557,14 @@ class GateMarkerMatrixView(QWidget):
         # Update column widths
         h_header = self._table_view.horizontalHeader()
         h_header.setDefaultSectionSize(cell_size)
+
+        # Propagate zoom level to delegate and headers for content scaling
+        self._delegate.set_zoom_level(self._zoom_level)
+        h_header.set_zoom_level(self._zoom_level)
+        v_header.set_zoom_level(self._zoom_level)
+
+        # Force repaint of the table
+        self._table_view.viewport().update()
 
         # Update zoom display
         self._zoom_display.setText(f"{int(self._zoom_level * 100)}%")
