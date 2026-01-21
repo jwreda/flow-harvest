@@ -1,0 +1,40 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Large data files
+*.fcs
+*.wsp
+
+# Temporary Excel files
+~$*.xlsx
+
+# Local exports (keep structure, ignore generated files)
+flowkit_export.xlsx
+*.fcs
