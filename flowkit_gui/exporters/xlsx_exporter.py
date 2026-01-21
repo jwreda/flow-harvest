@@ -133,13 +133,13 @@ class XLSXExporter:
             logger.info(f"Gate '{gate_id}' missing from {len(missing_samples)} samples")
 
         # Calculate total steps for progress
-        # Base: Gating_Strategy, Keywords, Counts_All, Frequencies_All, Statistics_All = 5
-        # _Selected sheets (only if markers selected): Counts_Selected, Frequencies_Selected, Statistics_Selected = 3
+        # Base: Gating_Strategy, Keywords, Counts_All, Frequencies_All, MFI_All, Concatenated_All = 6
+        # _Selected sheets (only if markers selected): Counts_Selected, Frequencies_Selected, MFI_Selected, Concatenated_Selected = 4
         # Optional: Keywords_Wide (+1), Tidy _All (+2), Tidy _Selected (+2 if markers selected)
-        selected_sheet_count = 3 if has_selected_markers else 0
+        selected_sheet_count = 4 if has_selected_markers else 0
         tidy_all_count = 2 if self._include_tidy_frequencies else 0
         tidy_selected_count = 2 if self._include_tidy_frequencies and has_selected_markers else 0
-        total_steps = 5 + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
+        total_steps = 6 + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
         current_step = 0
 
         # Sheet 1: Gating Strategy
@@ -274,26 +274,73 @@ class XLSXExporter:
                 if progress_callback:
                     progress_callback(current_step, total_steps)
 
-        # Sheet: Statistics with selected markers (only if markers are selected)
+        # Sheet: MFI_Selected - Pure MFI only (no gate stats)
         if has_selected_markers:
-            ws_stats_selected = wb.create_sheet("Statistics_Selected")
-            self._write_statistics_sheet(
-                ws_stats_selected,
-                stats_model,
-                self._selected_markers,
-                "Selected Markers"
-            )
+            ws_mfi_selected = wb.create_sheet("MFI_Selected")
+            if self._matrix_selections:
+                self._write_statistics_sheet_sparse(
+                    ws_mfi_selected,
+                    stats_model,
+                    self._matrix_selections,
+                    "MFI Selected (sparse)",
+                    include_gate_stats=False
+                )
+            else:
+                self._write_statistics_sheet(
+                    ws_mfi_selected,
+                    stats_model,
+                    self._selected_markers,
+                    "MFI Selected",
+                    include_gate_stats=False
+                )
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
 
-        # Sheet: Statistics with all markers (uses pre-calculated data)
-        ws_stats_all = wb.create_sheet("Statistics_All")
+        # Sheet: MFI_All - Pure MFI only (no gate stats)
+        ws_mfi_all = wb.create_sheet("MFI_All")
         self._write_statistics_sheet(
-            ws_stats_all,
+            ws_mfi_all,
             stats_model,
             self._all_markers,
-            "All Markers"
+            "MFI All",
+            include_gate_stats=False
+        )
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step, total_steps)
+
+        # Sheet: Concatenated_Selected - Gate stats + sparse MFI
+        if has_selected_markers:
+            ws_concat_selected = wb.create_sheet("Concatenated_Selected")
+            if self._matrix_selections:
+                self._write_statistics_sheet_sparse(
+                    ws_concat_selected,
+                    stats_model,
+                    self._matrix_selections,
+                    "Concatenated Selected (sparse)",
+                    include_gate_stats=True
+                )
+            else:
+                self._write_statistics_sheet(
+                    ws_concat_selected,
+                    stats_model,
+                    self._selected_markers,
+                    "Concatenated Selected",
+                    include_gate_stats=True
+                )
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
+
+        # Sheet: Concatenated_All - All gate stats + all MFI
+        ws_concat_all = wb.create_sheet("Concatenated_All")
+        self._write_statistics_sheet(
+            ws_concat_all,
+            stats_model,
+            self._all_markers,
+            "Concatenated All",
+            include_gate_stats=True
         )
         current_step += 1
         if progress_callback:
@@ -417,7 +464,8 @@ class XLSXExporter:
         ws,
         stats_model: StatisticsModel,
         markers: List[str],
-        description: str
+        description: str,
+        include_gate_stats: bool = True
     ) -> None:
         """
         Write statistics sheet using pre-calculated StatisticsModel.
@@ -427,6 +475,8 @@ class XLSXExporter:
             stats_model: Pre-calculated StatisticsModel with all needed data
             markers: List of markers to include in this sheet
             description: Description for logging
+            include_gate_stats: If True, include count/%parent/%total columns.
+                               If False, only include MFI columns (for MFI-only sheets).
         """
         logger.debug(f"Writing statistics sheet: {description}")
 
@@ -435,7 +485,77 @@ class XLSXExporter:
             self._gate_ids,
             markers,
             self._mfi_metrics,
-            include_keywords=True
+            include_keywords=True,
+            include_gate_stats=include_gate_stats
+        )
+
+        if df.empty:
+            ws.append([f"No data available for {description}"])
+            return
+
+        # Write header
+        headers = list(df.columns)
+        ws.append(headers)
+        self._style_header_row(ws, 1)
+
+        # Write data
+        for _, row in df.iterrows():
+            # Convert values to appropriate types
+            row_values = []
+            for val in row:
+                if pd.isna(val):
+                    row_values.append("")
+                elif isinstance(val, float):
+                    row_values.append(round(val, 4))
+                else:
+                    row_values.append(val)
+            ws.append(row_values)
+
+        # Auto-fit and freeze
+        self._autofit_columns(ws, max_width=30)
+
+        # Freeze first few columns (sample info + keywords)
+        # Find where gate columns start
+        freeze_col = 'F'  # Default
+        for i, col in enumerate(df.columns):
+            if '_count' in col or '_Mean_' in col or '_Median_' in col:
+                freeze_col = chr(ord('A') + i)
+                break
+
+        ws.freeze_panes = f"{freeze_col}2"
+
+    def _write_statistics_sheet_sparse(
+        self,
+        ws,
+        stats_model: StatisticsModel,
+        matrix_selections: List[tuple],
+        description: str,
+        include_gate_stats: bool = True
+    ) -> None:
+        """
+        Write statistics sheet with sparse MFI columns.
+
+        Only generates MFI columns for the exact (gate_id, channel) pairs specified
+        in matrix_selections, rather than the full cartesian product.
+
+        Args:
+            ws: Worksheet to write to
+            stats_model: Pre-calculated StatisticsModel with all needed data
+            matrix_selections: List of (gate_id, channel) tuples for MFI columns
+            description: Description for logging
+            include_gate_stats: If True, include count/%parent/%total for all tree-selected gates.
+                               If False, only include MFI columns (for MFI-only sheets).
+        """
+        logger.debug(f"Writing sparse statistics sheet: {description}")
+        logger.info(f"Sparse export: {len(matrix_selections)} specific gate/marker combinations")
+
+        # Get DataFrame using sparse method
+        df = stats_model.get_statistics_dataframe_sparse(
+            selected_pairs=matrix_selections,
+            metrics=self._mfi_metrics,
+            include_keywords=True,
+            include_gate_stats=include_gate_stats,
+            all_gate_ids=self._gate_ids if include_gate_stats else None
         )
 
         if df.empty:

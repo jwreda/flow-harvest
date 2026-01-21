@@ -304,8 +304,8 @@ class TestXLSXExporterKeywords:
 class TestXLSXExporterStatistics:
     """Tests for statistics sheets."""
 
-    def test_statistics_selected_sheet_exists(self, tmp_path):
-        """Test Statistics_Selected sheet is created."""
+    def test_mfi_selected_sheet_exists(self, tmp_path):
+        """Test MFI_Selected sheet is created."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -331,10 +331,11 @@ class TestXLSXExporterStatistics:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        assert "Statistics_Selected" in wb.sheetnames
+        assert "MFI_Selected" in wb.sheetnames
+        assert "Concatenated_Selected" in wb.sheetnames
 
-    def test_statistics_all_sheet_exists(self, tmp_path):
-        """Test Statistics_All sheet is created."""
+    def test_mfi_all_sheet_exists(self, tmp_path):
+        """Test MFI_All sheet is created."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -360,7 +361,8 @@ class TestXLSXExporterStatistics:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        assert "Statistics_All" in wb.sheetnames
+        assert "MFI_All" in wb.sheetnames
+        assert "Concatenated_All" in wb.sheetnames
 
 
 class TestXLSXExporterFormatting:
@@ -467,9 +469,9 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have: Gating_Strategy, Keywords, Counts_All, Frequencies_All, Statistics_All
+        # Should have: Gating_Strategy, Keywords, Counts_All, Frequencies_All, MFI_All, Concatenated_All
         # (no _Selected sheets when selected_markers is empty)
-        assert len(wb.sheetnames) == 5
+        assert len(wb.sheetnames) == 6
 
     def test_sheet_count_with_wide(self, tmp_path):
         """Test correct number of sheets with Keywords_Wide."""
@@ -498,9 +500,9 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have: Gating_Strategy, Keywords, Keywords_Wide, Counts_All, Frequencies_All, Statistics_All
+        # Should have: Gating_Strategy, Keywords, Keywords_Wide, Counts_All, Frequencies_All, MFI_All, Concatenated_All
         # (no _Selected sheets when selected_markers is empty)
-        assert len(wb.sheetnames) == 6
+        assert len(wb.sheetnames) == 7
 
     def test_selected_sheets_included_when_markers_selected(self, tmp_path):
         """Test _Selected sheets ARE included when markers are selected."""
@@ -531,14 +533,16 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have all 8 sheets including _Selected variants
-        assert "Statistics_Selected" in wb.sheetnames
+        # Should have all 10 sheets including _Selected variants
+        assert "MFI_Selected" in wb.sheetnames
+        assert "Concatenated_Selected" in wb.sheetnames
         assert "Counts_Selected" in wb.sheetnames
         assert "Frequencies_Selected" in wb.sheetnames
-        assert "Statistics_All" in wb.sheetnames
+        assert "MFI_All" in wb.sheetnames
+        assert "Concatenated_All" in wb.sheetnames
         assert "Counts_All" in wb.sheetnames
         assert "Frequencies_All" in wb.sheetnames
-        assert len(wb.sheetnames) == 8
+        assert len(wb.sheetnames) == 10
 
     def test_selected_sheets_excluded_when_no_markers(self, tmp_path):
         """Test _Selected sheets are NOT included when no markers are selected."""
@@ -570,14 +574,16 @@ class TestXLSXExporterSheetCount:
 
         wb = load_workbook(filepath)
         # _Selected sheets should NOT exist
-        assert "Statistics_Selected" not in wb.sheetnames
+        assert "MFI_Selected" not in wb.sheetnames
+        assert "Concatenated_Selected" not in wb.sheetnames
         assert "Counts_Selected" not in wb.sheetnames
         assert "Frequencies_Selected" not in wb.sheetnames
         # Only _All sheets should exist
-        assert "Statistics_All" in wb.sheetnames
+        assert "MFI_All" in wb.sheetnames
+        assert "Concatenated_All" in wb.sheetnames
         assert "Counts_All" in wb.sheetnames
         assert "Frequencies_All" in wb.sheetnames
-        assert len(wb.sheetnames) == 5
+        assert len(wb.sheetnames) == 6
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ This module provides:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
 import pandas as pd
 import numpy as np
@@ -211,7 +211,8 @@ class StatisticsModel:
         gate_ids: List[str],
         channels: List[str],
         metrics: List[MFIMetric],
-        include_keywords: bool = True
+        include_keywords: bool = True,
+        include_gate_stats: bool = True
     ) -> pd.DataFrame:
         """
         Generate statistics DataFrame in wide format.
@@ -221,6 +222,8 @@ class StatisticsModel:
             channels: Channels for MFI columns
             metrics: MFI metrics to include
             include_keywords: Whether to include sample keywords
+            include_gate_stats: If True, include count/%parent/%total columns.
+                               If False, only include MFI columns (for MFI-only sheets).
 
         Returns:
             DataFrame with one row per sample, columns for each gate/metric combination
@@ -248,10 +251,11 @@ class StatisticsModel:
                 if sample_id in self._statistics and gate_id in self._statistics[sample_id]:
                     stats = self._statistics[sample_id][gate_id]
 
-                    # Count and percent columns
-                    row[f"{gate_id}_count"] = stats.event_count
-                    row[f"{gate_id}_%parent"] = stats.percent_of_parent
-                    row[f"{gate_id}_%total"] = stats.percent_of_total
+                    # Count and percent columns (only if include_gate_stats=True)
+                    if include_gate_stats:
+                        row[f"{gate_id}_count"] = stats.event_count
+                        row[f"{gate_id}_%parent"] = stats.percent_of_parent
+                        row[f"{gate_id}_%total"] = stats.percent_of_total
 
                     # MFI columns
                     for channel in channels:
@@ -261,6 +265,86 @@ class StatisticsModel:
                                 if metric_key in stats.mfi_values[channel]:
                                     col_name = f"{gate_id}_{metric_key}_{channel}"
                                     row[col_name] = stats.mfi_values[channel][metric_key]
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    def get_statistics_dataframe_sparse(
+        self,
+        selected_pairs: List[tuple],  # List of (gate_id, channel) tuples
+        metrics: List[MFIMetric],
+        include_keywords: bool = True,
+        include_gate_stats: bool = True,
+        all_gate_ids: Optional[List[str]] = None
+    ) -> pd.DataFrame:
+        """
+        Generate statistics DataFrame with sparse MFI columns.
+
+        Only generates MFI columns for the exact (gate_id, channel) pairs specified,
+        rather than the full cartesian product of gates × channels.
+
+        Args:
+            selected_pairs: List of (gate_id, channel) tuples for MFI columns
+            metrics: MFI metrics to include
+            include_keywords: Whether to include sample keywords
+            include_gate_stats: If True, include count/%parent/%total columns.
+                               If False, only include MFI columns (for MFI-only sheets).
+            all_gate_ids: List of all gate IDs for gate stats. If provided and include_gate_stats=True,
+                         gate stats are included for ALL these gates. If None, only gates in selected_pairs.
+
+        Returns:
+            DataFrame with one row per sample, sparse MFI columns for selected pairs only
+        """
+        rows = []
+
+        # Determine which gates get stats columns (only matters if include_gate_stats=True)
+        if include_gate_stats:
+            if all_gate_ids:
+                gate_ids_for_stats = all_gate_ids
+            else:
+                # Only gates that appear in selected_pairs
+                gate_ids_for_stats = list(set(gate_id for gate_id, _ in selected_pairs))
+        else:
+            gate_ids_for_stats = []
+
+        # Use included samples if available (from calculate_statistics), else all samples
+        samples = getattr(self, '_included_samples', self._workspace.samples)
+
+        for sample in samples:
+            sample_id = sample.sample_id
+            row = {
+                'sample_id': sample_id,
+                'sample_name': sample.name,
+            }
+
+            # Add keywords if requested
+            if include_keywords:
+                custom = sample.get_custom_keywords()
+                for kw_name, kw_value in custom.items():
+                    row[kw_name] = str(kw_value) if kw_value else ''
+
+            # Add gate statistics (count, %parent, %total) if enabled
+            for gate_id in gate_ids_for_stats:
+                if sample_id in self._statistics and gate_id in self._statistics[sample_id]:
+                    stats = self._statistics[sample_id][gate_id]
+
+                    # Count and percent columns
+                    row[f"{gate_id}_count"] = stats.event_count
+                    row[f"{gate_id}_%parent"] = stats.percent_of_parent
+                    row[f"{gate_id}_%total"] = stats.percent_of_total
+
+            # Add MFI columns ONLY for selected (gate_id, channel) pairs
+            for gate_id, channel in selected_pairs:
+                if sample_id in self._statistics and gate_id in self._statistics[sample_id]:
+                    stats = self._statistics[sample_id][gate_id]
+
+                    if channel in stats.mfi_values:
+                        for metric in metrics:
+                            metric_key = metric.value
+                            if metric_key in stats.mfi_values[channel]:
+                                col_name = f"{gate_id}_{metric_key}_{channel}"
+                                row[col_name] = stats.mfi_values[channel][metric_key]
 
             rows.append(row)
 
@@ -317,10 +401,10 @@ class StatisticsModel:
         """Generate wide format frequency DataFrame (one row per sample)."""
         rows = []
 
-        # Build gate path lookup for column naming (using hierarchical bullet notation)
+        # Build gate path lookup for column naming (using clean path format for Excel)
         gate_paths = {}
         for gate_info in self._workspace.gates:
-            gate_paths[gate_info.gate_id] = gate_info.hierarchical_path_string
+            gate_paths[gate_info.gate_id] = gate_info.full_path_string
 
         # Use included samples if available, else all samples
         samples = getattr(self, '_included_samples', self._workspace.samples)
@@ -370,10 +454,10 @@ class StatisticsModel:
         """Generate tidy format frequency DataFrame (one row per gate per sample)."""
         rows = []
 
-        # Build gate path lookup (using hierarchical bullet notation)
+        # Build gate path lookup (using clean path format for Excel)
         gate_paths = {}
         for gate_info in self._workspace.gates:
-            gate_paths[gate_info.gate_id] = gate_info.hierarchical_path_string
+            gate_paths[gate_info.gate_id] = gate_info.full_path_string
 
         # Use included samples if available, else all samples
         samples = getattr(self, '_included_samples', self._workspace.samples)

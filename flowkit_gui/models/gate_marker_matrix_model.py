@@ -18,6 +18,53 @@ from ..utils.logging_config import get_logger
 logger = get_logger("gate_marker_matrix_model")
 
 
+def _disambiguate_duplicate_names(gate_name: str, gate_ids: List[str]) -> Dict[str, str]:
+    """
+    Add minimal parent prefix to disambiguate duplicate gate names.
+
+    Args:
+        gate_name: The base name that appears multiple times
+        gate_ids: List of full path gate_ids sharing this name
+
+    Returns:
+        Dict mapping gate_id to disambiguated display name
+    """
+    # Parse paths: "Cells/Live/CD4+/Reporter+" -> ["Cells", "Live", "CD4+", "Reporter+"]
+    parsed_paths = {gate_id: gate_id.split('/') for gate_id in gate_ids}
+
+    # Start with 1 parent prefix level
+    prefix_levels = 1
+    max_depth = max(len(p) for p in parsed_paths.values())
+
+    while prefix_levels < max_depth:
+        # Build candidate names with current prefix level
+        candidates: Dict[str, str] = {}
+        for gate_id, path_parts in parsed_paths.items():
+            # Get the last (prefix_levels + 1) components
+            # e.g., prefix_levels=1 for "Cells/Live/CD4+/Reporter+" -> "CD4+/Reporter+"
+            start_idx = max(0, len(path_parts) - prefix_levels - 1)
+            display_name = "/".join(path_parts[start_idx:])
+            candidates[gate_id] = display_name
+
+        # Check if all candidate names are unique
+        seen_names: Set[str] = set()
+        all_unique = True
+        for display_name in candidates.values():
+            if display_name in seen_names:
+                all_unique = False
+                break
+            seen_names.add(display_name)
+
+        if all_unique:
+            return candidates
+
+        # Need more prefix levels
+        prefix_levels += 1
+
+    # Fallback: use full paths (should rarely happen)
+    return {gate_id: gate_id for gate_id in gate_ids}
+
+
 class GateMarkerMatrixModel(QAbstractTableModel):
     """
     Qt model for gate × marker selection matrix.
@@ -42,6 +89,39 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         # Sparse selection storage: set of (gate_id, channel) tuples
         self._selections: Set[Tuple[str, str]] = set()
 
+        # Disambiguated display names: gate_id -> display name
+        self._display_names: Dict[str, str] = {}
+
+    def _compute_display_names(self) -> None:
+        """
+        Compute disambiguated display names for all gates.
+
+        For gates with unique names, uses the simple name.
+        For gates with duplicate names, adds minimal parent prefix until unique.
+        Populates self._display_names dict mapping gate_id -> display name.
+        """
+        self._display_names.clear()
+
+        if not self._gates:
+            return
+
+        # Step 1: Count occurrences of each base name
+        name_to_gate_ids: Dict[str, List[str]] = {}
+        for gate_id, gate_name, _ in self._gates:
+            if gate_name not in name_to_gate_ids:
+                name_to_gate_ids[gate_name] = []
+            name_to_gate_ids[gate_name].append(gate_id)
+
+        # Step 2: Build display names
+        for gate_name, gate_ids in name_to_gate_ids.items():
+            if len(gate_ids) == 1:
+                # Unique name - use as-is
+                self._display_names[gate_ids[0]] = gate_name
+            else:
+                # Duplicate names - need disambiguation
+                disambiguated = _disambiguate_duplicate_names(gate_name, gate_ids)
+                self._display_names.update(disambiguated)
+
     def set_gates_and_markers(
         self,
         gates: List[GateInfo],
@@ -59,6 +139,7 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         self._gates = [(g.gate_id, g.name, g.depth) for g in gates]
         self._markers = [(m.pnn_label, m.display_name) for m in markers]
         self._selections.clear()
+        self._compute_display_names()
 
         self.endResetModel()
 
@@ -148,10 +229,10 @@ class GateMarkerMatrixModel(QAbstractTableModel):
                     _, display_name = self._markers[section]
                     return display_name
             else:
-                # Row headers = gate names (without depth dots - custom header paints those)
+                # Row headers = disambiguated gate names (without depth dots - custom header paints those)
                 if 0 <= section < len(self._gates):
-                    _, gate_name, _ = self._gates[section]
-                    return gate_name
+                    gate_id, gate_name, _ = self._gates[section]
+                    return self._display_names.get(gate_id, gate_name)
         elif role == Qt.UserRole:
             # Return depth for vertical headers (used by ColoredDepthHeaderView)
             if orientation == Qt.Vertical and 0 <= section < len(self._gates):
