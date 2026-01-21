@@ -92,17 +92,27 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         # Disambiguated display names: gate_id -> display name
         self._display_names: Dict[str, str] = {}
 
+        # Whether to disambiguate duplicate gate names with parent prefixes
+        self._disambiguate_enabled: bool = True
+
     def _compute_display_names(self) -> None:
         """
         Compute disambiguated display names for all gates.
 
         For gates with unique names, uses the simple name.
-        For gates with duplicate names, adds minimal parent prefix until unique.
+        For gates with duplicate names, adds minimal parent prefix until unique
+        (if disambiguation is enabled).
         Populates self._display_names dict mapping gate_id -> display name.
         """
         self._display_names.clear()
 
         if not self._gates:
+            return
+
+        # Short names mode - always use base name without disambiguation
+        if not self._disambiguate_enabled:
+            for gate_id, gate_name, _ in self._gates:
+                self._display_names[gate_id] = gate_name
             return
 
         # Step 1: Count occurrences of each base name
@@ -121,6 +131,19 @@ class GateMarkerMatrixModel(QAbstractTableModel):
                 # Duplicate names - need disambiguation
                 disambiguated = _disambiguate_duplicate_names(gate_name, gate_ids)
                 self._display_names.update(disambiguated)
+
+    @property
+    def disambiguate_enabled(self) -> bool:
+        """Whether duplicate gate names get parent prefixes."""
+        return self._disambiguate_enabled
+
+    def set_disambiguate_enabled(self, enabled: bool) -> None:
+        """Enable/disable disambiguation. Triggers model reset to update display."""
+        if self._disambiguate_enabled != enabled:
+            self.beginResetModel()
+            self._disambiguate_enabled = enabled
+            self._compute_display_names()
+            self.endResetModel()
 
     def set_gates_and_markers(
         self,

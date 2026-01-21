@@ -221,3 +221,68 @@ class TestGateMarkerMatrixDisambiguation:
         assert model.headerData(1, Qt.Vertical, Qt.DisplayRole) == "CD8+/Reporter+"
         assert model.headerData(2, Qt.Vertical, Qt.DisplayRole) == "CD45+/Reporter+"
         assert model.headerData(3, Qt.Vertical, Qt.DisplayRole) == "Lymphocytes/Reporter+"
+
+
+class TestPlusMinusVariations:
+    """Tests ensuring + and - gate name variations are correctly distinguished."""
+
+    def test_plus_minus_variations_not_confused(self, qapp):
+        """Test that F4-80+ and F4-80- are different names, not duplicates."""
+        model = GateMarkerMatrixModel()
+        gates = [
+            _make_gate("Cells/Live/CD45+/F4-80+ CD11b+"),
+            _make_gate("Cells/Live/CD45+/F4-80- CD11b+"),  # Different name!
+        ]
+        markers = [_make_marker("BUV496-A")]
+        model.set_gates_and_markers(gates, markers)
+
+        # These are DIFFERENT base names - should NOT be disambiguated
+        assert model.headerData(0, Qt.Vertical, Qt.DisplayRole) == "F4-80+ CD11b+"
+        assert model.headerData(1, Qt.Vertical, Qt.DisplayRole) == "F4-80- CD11b+"
+
+    def test_actual_duplicates_with_plus_names(self, qapp):
+        """Test true duplicates with + in name get proper disambiguation."""
+        model = GateMarkerMatrixModel()
+        gates = [
+            _make_gate("Cells/Live/CD45+/F4-80+ CD11b+"),
+            _make_gate("Cells/Live/CD4+/F4-80+ CD11b+"),  # Same name, different parent
+        ]
+        markers = [_make_marker("BUV496-A")]
+        model.set_gates_and_markers(gates, markers)
+
+        # Same base name "F4-80+ CD11b+" - SHOULD be disambiguated
+        assert model.headerData(0, Qt.Vertical, Qt.DisplayRole) == "CD45+/F4-80+ CD11b+"
+        assert model.headerData(1, Qt.Vertical, Qt.DisplayRole) == "CD4+/F4-80+ CD11b+"
+
+    def test_mixed_plus_minus_with_duplicates(self, qapp):
+        """Test complex scenario with both +/- variations and true duplicates."""
+        model = GateMarkerMatrixModel()
+        gates = [
+            # Two "F4-80+ CD11b+" gates - true duplicates, need disambiguation
+            _make_gate("Cells/Live/CD45+/F4-80+ CD11b+"),
+            _make_gate("Cells/Live/CD4+/F4-80+ CD11b+"),
+            # One "F4-80- CD11b+" gate - unique, no disambiguation needed
+            _make_gate("Cells/Live/CD45+/F4-80- CD11b+"),
+        ]
+        markers = [_make_marker("BUV496-A")]
+        model.set_gates_and_markers(gates, markers)
+
+        # The positive variants are duplicates and get disambiguated
+        assert model.headerData(0, Qt.Vertical, Qt.DisplayRole) == "CD45+/F4-80+ CD11b+"
+        assert model.headerData(1, Qt.Vertical, Qt.DisplayRole) == "CD4+/F4-80+ CD11b+"
+        # The negative variant is unique and stays as-is
+        assert model.headerData(2, Qt.Vertical, Qt.DisplayRole) == "F4-80- CD11b+"
+
+    def test_gates_differing_only_in_plus_minus(self, qapp):
+        """Test gates that differ only in + vs - suffix."""
+        model = GateMarkerMatrixModel()
+        gates = [
+            _make_gate("Cells/Live/Foxp3+"),
+            _make_gate("Cells/Live/Foxp3-"),
+        ]
+        markers = [_make_marker("BUV496-A")]
+        model.set_gates_and_markers(gates, markers)
+
+        # These are different names - exact string match matters
+        assert model.headerData(0, Qt.Vertical, Qt.DisplayRole) == "Foxp3+"
+        assert model.headerData(1, Qt.Vertical, Qt.DisplayRole) == "Foxp3-"

@@ -137,7 +137,7 @@ class ColoredDepthHeaderView(QHeaderView):
         self._drag_start_x = None
         self._drag_start_width = None
         self._min_width = 80
-        self._max_width = 400
+        self._resize_handle_width = 10  # pixels for resize detection (increased from 5 for easier grabbing)
         self.setMouseTracking(True)
 
     def set_zoom_level(self, zoom: float) -> None:
@@ -210,6 +210,16 @@ class ColoredDepthHeaderView(QHeaderView):
                 )
                 painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(gate_name))
 
+        # Draw subtle grip indicator at right edge for resize handle
+        grip_x = rect.right() - 3
+        grip_color = QColor("#888888")
+        grip_color.setAlpha(120)  # Semi-transparent
+        painter.setPen(QPen(grip_color, 1))
+        # Draw 3 vertical dots
+        y_mid = rect.y() + rect.height() // 2
+        for offset in [-4, 0, 4]:
+            painter.drawPoint(grip_x, y_mid + offset)
+
         painter.restore()
 
     def sizeHint(self) -> QSize:
@@ -224,7 +234,7 @@ class ColoredDepthHeaderView(QHeaderView):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Start width resize if clicking near right edge of vertical header."""
-        if self.orientation() == Qt.Vertical and event.x() >= self.width() - 5:
+        if self.orientation() == Qt.Vertical and event.x() >= self.width() - self._resize_handle_width:
             self._drag_start_x = event.globalX()
             self._drag_start_width = self.width()
             event.accept()
@@ -238,11 +248,13 @@ class ColoredDepthHeaderView(QHeaderView):
                 # Currently dragging - calculate new width
                 delta = event.globalX() - self._drag_start_x
                 new_width = self._drag_start_width + delta
-                new_width = max(self._min_width, min(self._max_width, new_width))
+                # Dynamic max width: 90% of parent viewport, with fallback
+                max_width = int(self.parent().width() * 0.9) if self.parent() else 400
+                new_width = max(self._min_width, min(max_width, new_width))
                 self.setFixedWidth(new_width)
                 event.accept()
                 return
-            elif event.x() >= self.width() - 5:
+            elif event.x() >= self.width() - self._resize_handle_width:
                 # Hovering near edge - show resize cursor
                 self.setCursor(Qt.SizeHorCursor)
             else:
@@ -388,6 +400,7 @@ class GateMarkerMatrixView(QWidget):
 
         # Use custom colored depth header for rows (gate names with colored dots)
         colored_header = ColoredDepthHeaderView(Qt.Vertical, self._table_view)
+        colored_header.setFixedWidth(500)  # Initial width for gate names column
         self._table_view.setVerticalHeader(colored_header)
         v_header = self._table_view.verticalHeader()
         v_header.setVisible(True)
@@ -463,6 +476,16 @@ class GateMarkerMatrixView(QWidget):
         reset_zoom_btn.setToolTip("Reset to 100%")
         layout.addWidget(reset_zoom_btn)
 
+        layout.addSpacing(20)
+
+        # Disambiguation toggle
+        self._disambiguate_btn = QPushButton("Full Names")
+        self._disambiguate_btn.setCheckable(True)
+        self._disambiguate_btn.setChecked(True)
+        self._disambiguate_btn.setToolTip("Toggle between full names (with parent prefix for duplicates) and short names")
+        self._disambiguate_btn.clicked.connect(self._on_disambiguate_toggled)
+        layout.addWidget(self._disambiguate_btn)
+
         layout.addStretch()
 
         # Help text - styled via QSS using object name
@@ -521,6 +544,12 @@ class GateMarkerMatrixView(QWidget):
         """Clear all selections."""
         if self._model:
             self._model.clear_all()
+
+    def _on_disambiguate_toggled(self, checked: bool) -> None:
+        """Toggle disambiguation mode for gate names."""
+        if self._model:
+            self._model.set_disambiguate_enabled(checked)
+            self._disambiguate_btn.setText("Full Names" if checked else "Short Names")
 
     def _on_row_header_clicked(self, row: int) -> None:
         """Handle click on row header - toggle entire row."""
