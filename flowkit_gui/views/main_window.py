@@ -33,10 +33,12 @@ from ..models.statistics_model import StatisticsModel, MFIMetric
 from ..models.sample_selection_model import SampleSelectionModel
 from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
 from .gate_marker_matrix_view import GateMarkerMatrixView
+from .styled_tree_delegate import AccentedTreeItemDelegate
 from ..exporters.xlsx_exporter import XLSXExporter
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
 from ..utils.theme_manager import ThemeMode, get_theme_manager
+from ..utils.animations import AnimatedButton
 from ..utils.fcs_discovery import (
     discover_fcs_files, get_fcs_file_list, ProcessingLevel, DiscoveryResult
 )
@@ -479,7 +481,7 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        self._export_btn = QPushButton("  Export to XLSX")
+        self._export_btn = AnimatedButton("  Export to XLSX", primary=True)
         self._export_btn.setIcon(get_icon("export-heart"))
         self._export_btn.setObjectName("exportButton")
         self._export_btn.clicked.connect(self._on_export)
@@ -512,7 +514,7 @@ class MainWindow(QMainWindow):
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()
 
-        self._main_export_btn = QPushButton("  Export to XLSX")
+        self._main_export_btn = AnimatedButton("  Export to XLSX", primary=True)
         self._main_export_btn.setIcon(get_icon("sparkles-arrow"))
         self._main_export_btn.setObjectName("mainExportButton")
         self._main_export_btn.setMinimumWidth(200)
@@ -553,6 +555,10 @@ class MainWindow(QMainWindow):
 
         # Connect itemChanged signal to sync reference gates when user clicks checkboxes
         self._gate_tree_model.itemChanged.connect(self._on_gate_item_changed)
+
+        # Apply custom delegate for selection accent bar
+        self._gate_tree_delegate = AccentedTreeItemDelegate(self._gate_tree_view)
+        self._gate_tree_view.setItemDelegate(self._gate_tree_delegate)
 
         layout.addWidget(self._gate_tree_view)
 
@@ -639,6 +645,11 @@ class MainWindow(QMainWindow):
         self._sample_selection_tree.header().setStretchLastSection(True)
         self._sample_selection_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self._sample_selection_tree.clicked.connect(self._on_sample_tree_clicked)
+
+        # Apply custom delegate for selection accent bar
+        self._sample_tree_delegate = AccentedTreeItemDelegate(self._sample_selection_tree)
+        self._sample_selection_tree.setItemDelegate(self._sample_tree_delegate)
+
         sample_selection_layout.addWidget(self._sample_selection_tree)
 
         # Sample selection buttons
