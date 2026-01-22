@@ -596,6 +596,7 @@ class StatisticsModel:
             # Get reference gate path for computing relative paths
             ref_path_parts = ref_gate_id.split('/')
             ref_depth = len(ref_path_parts)
+            ref_gate_name = ref_path_parts[-1] if ref_path_parts else ref_gate_id
 
             for sample in samples:
                 sample_id = sample.sample_id
@@ -644,7 +645,7 @@ class StatisticsModel:
 
                     # Add columns for this descendant
                     row[f"{relative_path}_count"] = desc_count
-                    row[f"{relative_path}_%of_ref"] = pct_of_ref
+                    row[f"{relative_path}_%of_{ref_gate_name}"] = pct_of_ref
 
                 rows.append(row)
 

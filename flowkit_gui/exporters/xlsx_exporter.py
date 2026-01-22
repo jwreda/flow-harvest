@@ -807,7 +807,7 @@ class XLSXExporter:
         # Freeze first columns (sample info + keywords) and header row
         freeze_col = 'D'  # Default: after sample_id, sample_name, and some keywords
         for i, col in enumerate(df.columns):
-            if '_count' in col or '_%of_ref' in col:
+            if '_count' in col or '_%of_' in col:
                 freeze_col = chr(ord('A') + min(i, 25))  # Cap at 'Z'
                 break
 
