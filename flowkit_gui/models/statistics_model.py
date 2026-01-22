@@ -16,6 +16,7 @@ import numpy as np
 from .workspace_model import WorkspaceModel, Sample, DataSource
 from ..utils.mfi_calculations import calculate_mean, calculate_median, calculate_geometric_mean
 from ..utils.logging_config import get_logger
+from ..utils.cancellation import CancellationToken, CancellationError
 
 logger = get_logger("statistics_model")
 
@@ -78,7 +79,8 @@ class StatisticsModel:
         metrics: List[MFIMetric],
         progress_callback: Optional[Callable[[int, int], None]] = None,
         sample_ids: Optional[List[str]] = None,
-        status_callback: Optional[Callable[[str], None]] = None
+        status_callback: Optional[Callable[[str], None]] = None,
+        cancellation_token: Optional[CancellationToken] = None
     ) -> None:
         """
         Calculate statistics for specified gates and channels.
@@ -90,6 +92,10 @@ class StatisticsModel:
             progress_callback: Optional callback(current, total) for progress
             sample_ids: Optional list of sample IDs to include (None = all samples)
             status_callback: Optional callback(message) for status updates
+            cancellation_token: Optional token to support cancellation
+
+        Raises:
+            CancellationError: If cancellation_token is cancelled
         """
         self._statistics.clear()
         self._warnings.clear()
@@ -113,6 +119,10 @@ class StatisticsModel:
         successful_calcs = 0
 
         for sample_idx, sample in enumerate(samples):
+            # Check for cancellation at each sample boundary
+            if cancellation_token:
+                cancellation_token.check_cancelled()
+
             sample_id = sample.sample_id
             self._statistics[sample_id] = {}
 

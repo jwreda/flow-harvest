@@ -42,6 +42,7 @@ from ..utils.animations import AnimatedButton
 from ..utils.fcs_discovery import (
     discover_fcs_files, get_fcs_file_list, ProcessingLevel, DiscoveryResult
 )
+from ..utils.cancellation import CancellationToken, CancellationError
 from ..config import FCS_MAX_SEARCH_DEPTH
 
 # Initialize logging
@@ -511,9 +512,17 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
-        # Bottom panel - Export button
+        # Bottom panel - Export button and options
         bottom_layout = QHBoxLayout()
         bottom_layout.addStretch()
+
+        # Checkbox for including _All sheets
+        self._include_all_sheets_checkbox = QCheckBox("Include _All sheets")
+        self._include_all_sheets_checkbox.setChecked(False)
+        self._include_all_sheets_checkbox.setToolTip(
+            "Include Counts_All, Frequencies_All, MFI_All, and Concatenated_All sheets"
+        )
+        bottom_layout.addWidget(self._include_all_sheets_checkbox)
 
         self._main_export_btn = AnimatedButton("  Export to XLSX", primary=True)
         self._main_export_btn.setIcon(get_icon("sparkles-arrow"))
@@ -1508,6 +1517,7 @@ class MainWindow(QMainWindow):
                 logger.info(f"Descendant depth: {'unlimited' if descendant_depth == 0 else descendant_depth}")
 
             # Create exporter with selected samples and matrix selections
+            include_all_sheets = self._include_all_sheets_checkbox.isChecked()
             exporter = XLSXExporter(
                 workspace=self._workspace_model,
                 keywords_model=self._keywords_model,
@@ -1517,6 +1527,7 @@ class MainWindow(QMainWindow):
                 mfi_metrics=mfi_metrics,
                 include_wide_keywords=include_wide_keywords,
                 include_tidy_frequencies=include_tidy_frequencies,
+                include_all_sheets=include_all_sheets,
                 data_source=data_source,
                 index_columns=index_columns,
                 selected_keywords=selected_keywords,
@@ -1532,8 +1543,20 @@ class MainWindow(QMainWindow):
             progress.setMinimumDuration(0)
             progress.setMinimumWidth(400)  # Wider to show detailed status
 
+            # Create cancellation token for user-initiated cancellation
+            cancellation_token = CancellationToken()
+
+            def on_cancel():
+                cancellation_token.cancel("Export cancelled by user")
+                logger.info("User requested export cancellation")
+
+            progress.canceled.connect(on_cancel)
+
             def update_progress(current, total):
                 progress.setValue(int(current / total * 100))
+                # Check if user cancelled
+                if cancellation_token.is_cancelled:
+                    return
 
             def update_status(message):
                 progress.setLabelText(message)
@@ -1541,11 +1564,12 @@ class MainWindow(QMainWindow):
                 from PyQt5.QtWidgets import QApplication
                 QApplication.processEvents()
 
-            # Export with both progress and status callbacks
+            # Export with progress, status, and cancellation callbacks
             exporter.export(
                 file_path,
                 progress_callback=update_progress,
-                status_callback=update_status
+                status_callback=update_status,
+                cancellation_token=cancellation_token
             )
 
             progress.close()
@@ -1569,6 +1593,13 @@ class MainWindow(QMainWindow):
 
             logger.info(f"Export completed: {file_path}")
 
+        except CancellationError:
+            logger.info("Export cancelled by user")
+            QMessageBox.information(
+                self,
+                "Export Cancelled",
+                "Export was cancelled."
+            )
         except Exception as e:
             logger.error(f"Export failed: {type(e).__name__}: {e}")
             QMessageBox.critical(

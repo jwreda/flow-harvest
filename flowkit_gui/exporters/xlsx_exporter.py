@@ -21,6 +21,7 @@ from ..models.workspace_model import WorkspaceModel, DataSource
 from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric, FrequencyDataType
 from ..utils.logging_config import get_logger
+from ..utils.cancellation import CancellationToken, CancellationError
 
 logger = get_logger("xlsx_exporter")
 
@@ -48,6 +49,7 @@ class XLSXExporter:
         mfi_metrics: List[MFIMetric],
         include_wide_keywords: bool = False,
         include_tidy_frequencies: bool = False,
+        include_all_sheets: bool = False,
         data_source: DataSource = DataSource.AUTO,
         index_columns: Optional[List[str]] = None,
         selected_keywords: Optional[List[str]] = None,
@@ -68,6 +70,7 @@ class XLSXExporter:
             mfi_metrics: List of MFI metrics to calculate
             include_wide_keywords: Whether to include Keywords_Wide sheet
             include_tidy_frequencies: Whether to include tidy frequency sheets
+            include_all_sheets: Whether to include _All sheets (Counts_All, Frequencies_All, MFI_All, Concatenated_All)
             data_source: Event data source (AUTO, RAW, or COMP)
             index_columns: Keywords to use as index columns in Keywords_Wide sheet
             selected_keywords: Keywords to include in export (None = all keywords)
@@ -84,6 +87,7 @@ class XLSXExporter:
         self._mfi_metrics = mfi_metrics
         self._include_wide_keywords = include_wide_keywords
         self._include_tidy_frequencies = include_tidy_frequencies
+        self._include_all_sheets = include_all_sheets
         self._data_source = data_source
         self._index_columns = index_columns
         self._selected_keywords = selected_keywords
@@ -100,7 +104,8 @@ class XLSXExporter:
         self,
         filepath: str,
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        status_callback: Optional[Callable[[str], None]] = None
+        status_callback: Optional[Callable[[str], None]] = None,
+        cancellation_token: Optional[CancellationToken] = None
     ) -> None:
         """
         Export data to Excel workbook.
@@ -109,6 +114,10 @@ class XLSXExporter:
             filepath: Path to save the Excel file
             progress_callback: Optional callback(current, total) for progress
             status_callback: Optional callback(message) for detailed status updates
+            cancellation_token: Optional token to support cancellation
+
+        Raises:
+            CancellationError: If cancellation_token is cancelled
         """
         self._warnings.clear()
         wb = Workbook()
@@ -135,13 +144,15 @@ class XLSXExporter:
             logger.info(f"Gate '{gate_id}' missing from {len(missing_samples)} samples")
 
         # Calculate total steps for progress
-        # Base: Gating_Strategy, Keywords, Counts_All, Frequencies_All, MFI_All, Concatenated_All = 6
+        # Base: Gating_Strategy, Keywords = 2
+        # _All sheets (optional): Counts_All, Frequencies_All, MFI_All, Concatenated_All = 4
         # _Selected sheets (only if markers selected): Counts_Selected, Frequencies_Selected, MFI_Selected, Concatenated_Selected = 4
         # Optional: Keywords_Wide (+1), Tidy _All (+2), Tidy _Selected (+2 if markers selected)
+        all_sheet_count = 4 if self._include_all_sheets else 0
         selected_sheet_count = 4 if has_selected_markers else 0
-        tidy_all_count = 2 if self._include_tidy_frequencies else 0
+        tidy_all_count = 2 if self._include_tidy_frequencies and self._include_all_sheets else 0
         tidy_selected_count = 2 if self._include_tidy_frequencies and has_selected_markers else 0
-        total_steps = 6 + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
+        total_steps = 2 + all_sheet_count + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
         current_step = 0
 
         # Sheet 1: Gating Strategy
@@ -184,6 +195,10 @@ class XLSXExporter:
         if self._selected_sample_ids:
             logger.info(f"Filtering to {len(self._selected_sample_ids)} selected samples")
 
+        # Check for cancellation before heavy computation
+        if cancellation_token:
+            cancellation_token.check_cancelled()
+
         logger.info(f"Pre-calculating statistics for {len(all_markers_combined)} markers...")
         if status_callback:
             status_callback("Calculating statistics...")
@@ -194,24 +209,30 @@ class XLSXExporter:
                 all_markers_combined,
                 self._mfi_metrics,
                 sample_ids=self._selected_sample_ids,  # Filter by selected samples
-                status_callback=status_callback
+                status_callback=status_callback,
+                cancellation_token=cancellation_token
             )
             calc_warnings = stats_model.get_warnings()
             if calc_warnings:
                 self._warnings.extend(calc_warnings)
                 logger.debug(f"Collected {len(calc_warnings)} warnings from statistics calculation")
 
+        # Check for cancellation after statistics calculation
+        if cancellation_token:
+            cancellation_token.check_cancelled()
+
         # Sheet: Counts_All (wide format, counts only)
-        if status_callback:
-            status_callback("Writing Counts_All sheet...")
-        ws_counts_all = wb.create_sheet("Counts_All")
-        self._write_frequencies_wide_sheet(
-            ws_counts_all, stats_model, self._gate_ids, "All Gates Counts",
-            data_type=FrequencyDataType.COUNTS
-        )
-        current_step += 1
-        if progress_callback:
-            progress_callback(current_step, total_steps)
+        if self._include_all_sheets:
+            if status_callback:
+                status_callback("Writing Counts_All sheet...")
+            ws_counts_all = wb.create_sheet("Counts_All")
+            self._write_frequencies_wide_sheet(
+                ws_counts_all, stats_model, self._gate_ids, "All Gates Counts",
+                data_type=FrequencyDataType.COUNTS
+            )
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Sheet: Counts_Selected (only if markers are selected)
         if has_selected_markers:
@@ -227,16 +248,17 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Frequencies_All (wide format, percentages only)
-        if status_callback:
-            status_callback("Writing Frequencies_All sheet...")
-        ws_freq_all = wb.create_sheet("Frequencies_All")
-        self._write_frequencies_wide_sheet(
-            ws_freq_all, stats_model, self._gate_ids, "All Gates Frequencies",
-            data_type=FrequencyDataType.PERCENT
-        )
-        current_step += 1
-        if progress_callback:
-            progress_callback(current_step, total_steps)
+        if self._include_all_sheets:
+            if status_callback:
+                status_callback("Writing Frequencies_All sheet...")
+            ws_freq_all = wb.create_sheet("Frequencies_All")
+            self._write_frequencies_wide_sheet(
+                ws_freq_all, stats_model, self._gate_ids, "All Gates Frequencies",
+                data_type=FrequencyDataType.PERCENT
+            )
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Sheet: Frequencies_Selected (only if markers are selected)
         if has_selected_markers:
@@ -253,16 +275,18 @@ class XLSXExporter:
 
         # Optional: Tidy format sheets (counts and frequencies separate)
         if self._include_tidy_frequencies:
-            if status_callback:
-                status_callback("Writing Counts_All_Tidy sheet...")
-            ws_counts_all_tidy = wb.create_sheet("Counts_All_Tidy")
-            self._write_frequencies_tidy_sheet(
-                ws_counts_all_tidy, stats_model, self._gate_ids, "All Gates Counts Tidy",
-                data_type=FrequencyDataType.COUNTS
-            )
-            current_step += 1
-            if progress_callback:
-                progress_callback(current_step, total_steps)
+            # Tidy _All sheets (only if include_all_sheets is enabled)
+            if self._include_all_sheets:
+                if status_callback:
+                    status_callback("Writing Counts_All_Tidy sheet...")
+                ws_counts_all_tidy = wb.create_sheet("Counts_All_Tidy")
+                self._write_frequencies_tidy_sheet(
+                    ws_counts_all_tidy, stats_model, self._gate_ids, "All Gates Counts Tidy",
+                    data_type=FrequencyDataType.COUNTS
+                )
+                current_step += 1
+                if progress_callback:
+                    progress_callback(current_step, total_steps)
 
             # Counts_Selected_Tidy (only if markers are selected)
             if has_selected_markers:
@@ -277,16 +301,18 @@ class XLSXExporter:
                 if progress_callback:
                     progress_callback(current_step, total_steps)
 
-            if status_callback:
-                status_callback("Writing Frequencies_All_Tidy sheet...")
-            ws_freq_all_tidy = wb.create_sheet("Frequencies_All_Tidy")
-            self._write_frequencies_tidy_sheet(
-                ws_freq_all_tidy, stats_model, self._gate_ids, "All Gates Frequencies Tidy",
-                data_type=FrequencyDataType.PERCENT
-            )
-            current_step += 1
-            if progress_callback:
-                progress_callback(current_step, total_steps)
+            # Frequencies_All_Tidy (only if include_all_sheets is enabled)
+            if self._include_all_sheets:
+                if status_callback:
+                    status_callback("Writing Frequencies_All_Tidy sheet...")
+                ws_freq_all_tidy = wb.create_sheet("Frequencies_All_Tidy")
+                self._write_frequencies_tidy_sheet(
+                    ws_freq_all_tidy, stats_model, self._gate_ids, "All Gates Frequencies Tidy",
+                    data_type=FrequencyDataType.PERCENT
+                )
+                current_step += 1
+                if progress_callback:
+                    progress_callback(current_step, total_steps)
 
             # Frequencies_Selected_Tidy (only if markers are selected)
             if has_selected_markers:
@@ -327,19 +353,20 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: MFI_All - Pure MFI only (no gate stats)
-        if status_callback:
-            status_callback("Writing MFI_All sheet...")
-        ws_mfi_all = wb.create_sheet("MFI_All")
-        self._write_statistics_sheet(
-            ws_mfi_all,
-            stats_model,
-            self._all_markers,
-            "MFI All",
-            include_gate_stats=False
-        )
-        current_step += 1
-        if progress_callback:
-            progress_callback(current_step, total_steps)
+        if self._include_all_sheets:
+            if status_callback:
+                status_callback("Writing MFI_All sheet...")
+            ws_mfi_all = wb.create_sheet("MFI_All")
+            self._write_statistics_sheet(
+                ws_mfi_all,
+                stats_model,
+                self._all_markers,
+                "MFI All",
+                include_gate_stats=False
+            )
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Sheet: Concatenated_Selected - Gate stats + sparse MFI
         if has_selected_markers:
@@ -367,19 +394,20 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Concatenated_All - All gate stats + all MFI
-        if status_callback:
-            status_callback("Writing Concatenated_All sheet...")
-        ws_concat_all = wb.create_sheet("Concatenated_All")
-        self._write_statistics_sheet(
-            ws_concat_all,
-            stats_model,
-            self._all_markers,
-            "Concatenated All",
-            include_gate_stats=True
-        )
-        current_step += 1
-        if progress_callback:
-            progress_callback(current_step, total_steps)
+        if self._include_all_sheets:
+            if status_callback:
+                status_callback("Writing Concatenated_All sheet...")
+            ws_concat_all = wb.create_sheet("Concatenated_All")
+            self._write_statistics_sheet(
+                ws_concat_all,
+                stats_model,
+                self._all_markers,
+                "Concatenated All",
+                include_gate_stats=True
+            )
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Write normalized frequency sheets if reference gates are selected
         if self._reference_gate_ids:
@@ -427,6 +455,10 @@ class XLSXExporter:
             ws_warnings = wb.create_sheet("Warnings")
             self._write_warnings(ws_warnings)
             logger.warning(f"Export completed with {len(self._warnings)} warnings")
+
+        # Final cancellation check before saving
+        if cancellation_token:
+            cancellation_token.check_cancelled()
 
         # Save workbook
         if status_callback:
@@ -476,9 +508,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            ws.append(list(row))
+        # Write data (vectorized for performance)
+        self._write_dataframe_rows(ws, df)
 
         # Auto-fit and freeze
         self._autofit_columns(ws)
@@ -496,9 +527,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            ws.append(list(row))
+        # Write data (vectorized for performance)
+        self._write_dataframe_rows(ws, df)
 
         # Auto-fit and freeze
         self._autofit_columns(ws)
@@ -543,18 +573,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            # Convert values to appropriate types
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 4))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 4 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=4)
 
         # Auto-fit and freeze
         self._autofit_columns(ws, max_width=30)
@@ -612,18 +632,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            # Convert values to appropriate types
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 4))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 4 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=4)
 
         # Auto-fit and freeze
         self._autofit_columns(ws, max_width=30)
@@ -670,17 +680,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 2))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 2 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=2)
 
         # Auto-fit columns
         self._autofit_columns(ws, max_width=40)
@@ -726,17 +727,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 2))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 2 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=2)
 
         # Auto-fit columns
         self._autofit_columns(ws, max_width=50)
@@ -806,17 +798,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 2))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 2 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=2)
 
         # Auto-fit columns
         self._autofit_columns(ws, max_width=40)
@@ -857,17 +840,8 @@ class XLSXExporter:
         ws.append(headers)
         self._style_header_row(ws, 1)
 
-        # Write data
-        for _, row in df.iterrows():
-            row_values = []
-            for val in row:
-                if pd.isna(val):
-                    row_values.append("")
-                elif isinstance(val, float):
-                    row_values.append(round(val, 2))
-                else:
-                    row_values.append(val)
-            ws.append(row_values)
+        # Write data (vectorized for performance, 2 decimal places)
+        self._write_dataframe_rows(ws, df, decimal_places=2)
 
         # Auto-fit columns
         self._autofit_columns(ws, max_width=50)
@@ -906,3 +880,38 @@ class XLSXExporter:
             # Add padding and cap at max_width
             adjusted_width = min(max_length + 2, max_width)
             ws.column_dimensions[column].width = adjusted_width
+
+    def _write_dataframe_rows(
+        self,
+        ws,
+        df: pd.DataFrame,
+        decimal_places: Optional[int] = None
+    ) -> None:
+        """
+        Write DataFrame rows to worksheet efficiently.
+
+        This method replaces slow iterrows() with vectorized operations
+        for significantly better performance on large datasets.
+
+        Args:
+            ws: Worksheet to write to
+            df: DataFrame containing the data
+            decimal_places: If provided, round float values to this many places
+                           and replace NaN with empty strings
+        """
+        if decimal_places is not None:
+            # Preprocess: round floats and handle NaN in one pass
+            def convert_value(val):
+                if pd.isna(val):
+                    return ""
+                elif isinstance(val, float):
+                    return round(val, decimal_places)
+                return val
+
+            # Use applymap for efficient conversion, then convert to rows
+            for row in df.values.tolist():
+                ws.append([convert_value(v) for v in row])
+        else:
+            # Simple case: use dataframe_to_rows (already imported)
+            for row in dataframe_to_rows(df, index=False, header=False):
+                ws.append(row)

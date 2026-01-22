@@ -118,7 +118,7 @@ class TestCountsSheets:
     """Tests for counts sheets (new feature)."""
 
     def test_counts_all_sheet_created(self, tmp_path):
-        """Test that Counts_All sheet is always created."""
+        """Test that Counts_All sheet is created when include_all_sheets=True."""
         workspace = MockWorkspaceModel()
         workspace.set_gates([
             create_test_gate("cells", "Cells", ("Cells",)),
@@ -139,7 +139,8 @@ class TestCountsSheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -203,7 +204,8 @@ class TestCountsSheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -223,7 +225,7 @@ class TestFrequencyWideSheets:
     """Tests for wide format frequency sheets."""
 
     def test_frequencies_all_sheet_created(self, tmp_path):
-        """Test that Frequencies_All sheet is always created."""
+        """Test that Frequencies_All sheet is created when include_all_sheets=True."""
         workspace = MockWorkspaceModel()
         workspace.set_gates([
             create_test_gate("cells", "Cells", ("Cells",)),
@@ -244,7 +246,8 @@ class TestFrequencyWideSheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -308,7 +311,8 @@ class TestFrequencyWideSheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -354,7 +358,8 @@ class TestFrequencyWideSheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -436,7 +441,8 @@ class TestFrequencyTidySheets:
             all_markers=["CD4"],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=True
+            include_tidy_frequencies=True,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -474,7 +480,8 @@ class TestFrequencyTidySheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=True
+            include_tidy_frequencies=True,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -530,7 +537,8 @@ class TestFrequencyTidySheets:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=True
+            include_tidy_frequencies=True,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -568,7 +576,8 @@ class TestFrequencyEdgeCases:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -611,7 +620,8 @@ class TestFrequencyEdgeCases:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -646,14 +656,15 @@ class TestFrequencyEdgeCases:
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # _All sheets should still exist
+        # _All sheets should exist when include_all_sheets=True
         assert "Frequencies_All" in wb.sheetnames
         # _Selected sheets should NOT exist (no markers selected)
         assert "Frequencies_Selected" not in wb.sheetnames
@@ -684,7 +695,8 @@ class TestFrequencySheetOrder:
             all_markers=["CD4"],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -728,7 +740,8 @@ class TestFrequencySheetOrder:
             all_markers=["CD4"],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=False,
-            include_tidy_frequencies=True
+            include_tidy_frequencies=True,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -776,7 +789,8 @@ class TestFrequencySheetOrder:
             all_markers=["CD4"],
             mfi_metrics=[MFIMetric.MEAN],
             include_wide_keywords=True,
-            include_tidy_frequencies=False
+            include_tidy_frequencies=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"

@@ -335,7 +335,7 @@ class TestXLSXExporterStatistics:
         assert "Concatenated_Selected" in wb.sheetnames
 
     def test_mfi_all_sheet_exists(self, tmp_path):
-        """Test MFI_All sheet is created."""
+        """Test MFI_All sheet is created when include_all_sheets=True."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -354,7 +354,8 @@ class TestXLSXExporterStatistics:
             selected_markers=[],
             all_markers=["CD4", "CD8", "CD45"],
             mfi_metrics=[MFIMetric.MEAN],
-            include_wide_keywords=False
+            include_wide_keywords=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -443,7 +444,7 @@ class TestXLSXExporterSheetCount:
     """Tests for correct number of sheets."""
 
     def test_sheet_count_without_wide(self, tmp_path):
-        """Test correct number of sheets without Keywords_Wide."""
+        """Test correct number of sheets without Keywords_Wide but with include_all_sheets."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -462,7 +463,8 @@ class TestXLSXExporterSheetCount:
             selected_markers=[],
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
-            include_wide_keywords=False
+            include_wide_keywords=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -474,7 +476,7 @@ class TestXLSXExporterSheetCount:
         assert len(wb.sheetnames) == 6
 
     def test_sheet_count_with_wide(self, tmp_path):
-        """Test correct number of sheets with Keywords_Wide."""
+        """Test correct number of sheets with Keywords_Wide and include_all_sheets."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -493,7 +495,8 @@ class TestXLSXExporterSheetCount:
             selected_markers=[],
             all_markers=[],
             mfi_metrics=[MFIMetric.MEAN],
-            include_wide_keywords=True
+            include_wide_keywords=True,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -526,14 +529,15 @@ class TestXLSXExporterSheetCount:
             selected_markers=["CD4", "CD8"],  # Markers ARE selected
             all_markers=["CD4", "CD8", "CD45"],
             mfi_metrics=[MFIMetric.MEAN],
-            include_wide_keywords=False
+            include_wide_keywords=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have all 10 sheets including _Selected variants
+        # Should have all 10 sheets including _Selected and _All variants
         assert "MFI_Selected" in wb.sheetnames
         assert "Concatenated_Selected" in wb.sheetnames
         assert "Counts_Selected" in wb.sheetnames
@@ -566,7 +570,8 @@ class TestXLSXExporterSheetCount:
             selected_markers=[],  # No markers selected
             all_markers=["CD4", "CD8", "CD45"],
             mfi_metrics=[MFIMetric.MEAN],
-            include_wide_keywords=False
+            include_wide_keywords=False,
+            include_all_sheets=True
         )
 
         filepath = tmp_path / "test.xlsx"
@@ -578,7 +583,7 @@ class TestXLSXExporterSheetCount:
         assert "Concatenated_Selected" not in wb.sheetnames
         assert "Counts_Selected" not in wb.sheetnames
         assert "Frequencies_Selected" not in wb.sheetnames
-        # Only _All sheets should exist
+        # Only _All sheets should exist (when include_all_sheets=True)
         assert "MFI_All" in wb.sheetnames
         assert "Concatenated_All" in wb.sheetnames
         assert "Counts_All" in wb.sheetnames

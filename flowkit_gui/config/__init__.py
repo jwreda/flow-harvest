@@ -12,4 +12,10 @@ from .defaults import (
     SCATTER_PREFIXES,
     FCS_MAX_SEARCH_DEPTH,
     FCS_EXTENSIONS,
+    # Memory management settings
+    CACHE_MEMORY_LIMIT_MB,
+    BATCH_SIZE,
+    GC_COLLECT_INTERVAL,
+    STREAMING_EXPORT_ROW_THRESHOLD,
+    MAX_PARALLEL_WORKERS,
 )

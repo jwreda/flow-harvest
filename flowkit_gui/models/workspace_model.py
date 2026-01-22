@@ -12,18 +12,23 @@ This module provides the core integration with FlowKit library for:
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Any, Set, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
+import multiprocessing
 import re
 import flowkit as fk
 import pandas as pd
 import numpy as np
 
 from ..utils.logging_config import get_logger
+from ..utils.cache import MemoryBoundedLRUCache
+from ..utils.cancellation import CancellationToken, CancellationError
 from ..config import (
     SYSTEM_KEYWORD_PREFIXES,
     SYSTEM_KEYWORD_EXACT,
     SYSTEM_KEYWORD_SUFFIXES,
+    CACHE_MEMORY_LIMIT_MB,
 )
 
 logger = get_logger("workspace_model")
@@ -157,12 +162,22 @@ class WorkspaceModel:
         self._channels: List[str] = []
         self._channel_info: List[ChannelInfo] = []
         # Track which gates exist in which samples (not all gates exist in all samples)
-        self._sample_gates: Dict[str, Set[str]] = {}  # sample_id → set of gate_ids
-        # Caches for performance optimization
-        self._event_cache: Dict[str, np.ndarray] = {}  # "sample_id:source" -> events array
-        self._membership_cache: Dict[Tuple[str, str], np.ndarray] = {}  # (sample_id, gate_id) -> membership
+        self._sample_gates: Dict[str, Set[str]] = {}  # sample_id -> set of gate_ids
+        # Memory-bounded LRU caches for performance optimization
+        # Split configured memory limit: 70% for events, 30% for membership
+        cache_bytes = CACHE_MEMORY_LIMIT_MB * 1024 * 1024
+        self._event_cache: MemoryBoundedLRUCache = MemoryBoundedLRUCache(
+            max_bytes=int(cache_bytes * 0.7)
+        )
+        self._membership_cache: MemoryBoundedLRUCache = MemoryBoundedLRUCache(
+            max_bytes=int(cache_bytes * 0.3)
+        )
         # Track which samples have been analyzed (for on-demand analysis)
         self._analyzed_samples: Set[str] = set()
+        logger.info(
+            f"Initialized caches: event={self._event_cache.memory_limit_mb:.0f}MB, "
+            f"membership={self._membership_cache.memory_limit_mb:.0f}MB"
+        )
 
     @property
     def is_loaded(self) -> bool:
@@ -196,13 +211,23 @@ class WorkspaceModel:
 
     def clear_cache(self) -> None:
         """Clear all cached event and membership data to free memory."""
-        cache_size = len(self._event_cache) + len(self._membership_cache)
+        event_count = len(self._event_cache)
+        membership_count = len(self._membership_cache)
+        event_evictions = self._event_cache.eviction_count
+        membership_evictions = self._membership_cache.eviction_count
+
         self._event_cache.clear()
         self._membership_cache.clear()
         self._analyzed_samples.clear()  # Clear analysis tracking too
         gc.collect()  # Force garbage collection to release memory
-        if cache_size > 0:
-            logger.info(f"Cleared {cache_size} cached items and ran garbage collection")
+
+        total_items = event_count + membership_count
+        if total_items > 0:
+            logger.info(
+                f"Cleared {total_items} cached items "
+                f"(events={event_count}, membership={membership_count}, "
+                f"prior evictions: events={event_evictions}, membership={membership_evictions})"
+            )
 
     def _ensure_sample_analyzed(self, sample_id: str) -> None:
         """Ensure a sample has been analyzed (on-demand analysis).
@@ -228,34 +253,116 @@ class WorkspaceModel:
             self._analyzed_samples.add(sample_id)
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
-        """Get events from cache or load and cache them."""
+        """Get events from cache or load and cache them.
+
+        Uses LRU cache with memory bounds - least recently used entries
+        are automatically evicted when memory limit is reached.
+        """
         cache_key = f"{sample_id}:{source}"
-        if cache_key not in self._event_cache:
-            # Ensure sample is analyzed before getting events (on-demand)
-            self._ensure_sample_analyzed(sample_id)
-            sample = self._workspace.get_sample(sample_id)
-            self._event_cache[cache_key] = sample.get_events(source=source)
-            logger.debug(f"Cached events for {cache_key}")
-        return self._event_cache[cache_key]
+        cached = self._event_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Ensure sample is analyzed before getting events (on-demand)
+        self._ensure_sample_analyzed(sample_id)
+        sample = self._workspace.get_sample(sample_id)
+        events = sample.get_events(source=source)
+        self._event_cache.put(cache_key, events)
+        return events
+
+    def _get_cached_events_selective(
+        self,
+        sample_id: str,
+        source: str,
+        channels: List[str]
+    ) -> Tuple[np.ndarray, List[str]]:
+        """Get events for specific channels only, with caching.
+
+        This method optimizes memory usage by caching only the requested
+        channels rather than all channels. Different channel sets create
+        different cache entries.
+
+        Args:
+            sample_id: Sample identifier
+            source: Data source ('raw' or 'comp')
+            channels: List of channel names to load
+
+        Returns:
+            Tuple of (events array with only requested channels, list of found channel names)
+
+        Note:
+            If the same channel set is requested multiple times for the
+            same sample, it will be served from cache. This is particularly
+            useful for MFI calculations that repeatedly access the same
+            marker channels.
+        """
+        # Create cache key that includes the channels
+        channel_key = ','.join(sorted(channels))
+        cache_key = f"{sample_id}:{source}:channels={channel_key}"
+
+        cached = self._event_cache.get(cache_key)
+        if cached is not None:
+            # Cache stores (events, labels) tuple
+            return cached
+
+        # Ensure sample is analyzed before getting events (on-demand)
+        self._ensure_sample_analyzed(sample_id)
+        sample = self._workspace.get_sample(sample_id)
+        all_events = sample.get_events(source=source)
+        all_labels = list(sample.pnn_labels)
+
+        # Filter to requested channels
+        channel_indices = []
+        found_channels = []
+        for ch in channels:
+            if ch in all_labels:
+                channel_indices.append(all_labels.index(ch))
+                found_channels.append(ch)
+
+        if not channel_indices:
+            logger.warning(f"None of requested channels found: {channels}")
+            return np.array([]).reshape(0, 0), []
+
+        # Extract only requested channel columns
+        filtered_events = all_events[:, channel_indices]
+
+        # Cache the filtered result
+        result = (filtered_events, found_channels)
+        self._event_cache.put(cache_key, result)
+
+        logger.debug(
+            f"Cached selective events for {sample_id}: "
+            f"{len(found_channels)}/{len(channels)} channels, "
+            f"{filtered_events.nbytes / 1024**2:.1f}MB"
+        )
+
+        return result
 
     def _get_gate_name_from_id(self, gate_id: str) -> str:
         """Extract gate name from full-path gate_id (e.g., 'Cells/Live/CD45+' -> 'CD45+')."""
         return gate_id.rsplit('/', 1)[-1] if '/' in gate_id else gate_id
 
     def _get_cached_membership(self, sample_id: str, gate_id: str) -> np.ndarray:
-        """Get gate membership from cache or compute and cache it."""
-        cache_key = (sample_id, gate_id)
-        if cache_key not in self._membership_cache:
-            # Ensure sample is analyzed before getting membership (on-demand)
-            self._ensure_sample_analyzed(sample_id)
-            fk_path = self.get_fk_gate_path(gate_id)
-            # Extract gate name from full-path gate_id for FlowKit API
-            gate_name = self._get_gate_name_from_id(gate_id)
-            self._membership_cache[cache_key] = self._workspace.get_gate_membership(
-                sample_id, gate_name, gate_path=fk_path
-            )
-            logger.debug(f"Cached membership for sample='{sample_id}', gate='{gate_id}'")
-        return self._membership_cache[cache_key]
+        """Get gate membership from cache or compute and cache it.
+
+        Uses LRU cache with memory bounds - least recently used entries
+        are automatically evicted when memory limit is reached.
+        """
+        cache_key = f"{sample_id}|{gate_id}"  # String key for LRU cache
+        cached = self._membership_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Ensure sample is analyzed before getting membership (on-demand)
+        self._ensure_sample_analyzed(sample_id)
+        fk_path = self.get_fk_gate_path(gate_id)
+        # Extract gate name from full-path gate_id for FlowKit API
+        gate_name = self._get_gate_name_from_id(gate_id)
+        membership = self._workspace.get_gate_membership(
+            sample_id, gate_name, gate_path=fk_path
+        )
+        self._membership_cache.put(cache_key, membership)
+        return membership
 
     def load_workspace(
         self,
@@ -744,6 +851,124 @@ class WorkspaceModel:
 
         logger.info(f"Successfully analyzed {len(self._analyzed_samples)} samples")
 
+    def analyze_samples_parallel(
+        self,
+        sample_ids: Optional[List[str]] = None,
+        max_workers: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        cancellation_token: Optional[CancellationToken] = None
+    ) -> Dict[str, bool]:
+        """
+        Analyze samples in parallel using a thread pool.
+
+        FlowKit uses numpy which releases the GIL, allowing true parallelism
+        with ThreadPoolExecutor. This can provide 2-4x speedup on multi-core
+        systems for large workspaces.
+
+        Args:
+            sample_ids: List of sample IDs to analyze (default: all)
+            max_workers: Maximum number of parallel workers (default: min(4, cpu_count))
+            progress_callback: Optional callback(current, total) for progress updates
+            cancellation_token: Optional token to support cancellation
+
+        Returns:
+            Dict mapping sample_id to success status (True=success, False=failed)
+
+        Raises:
+            CancellationError: If cancellation_token is cancelled
+
+        Note:
+            If parallel analysis encounters thread-safety issues with FlowKit,
+            use the sequential analyze_samples() method instead.
+        """
+        if not self._workspace:
+            return {}
+
+        if sample_ids is None:
+            sample_ids = [s.sample_id for s in self._samples]
+
+        # Filter out already-analyzed samples
+        samples_to_analyze = [
+            sid for sid in sample_ids
+            if sid not in self._analyzed_samples
+        ]
+
+        if not samples_to_analyze:
+            logger.info("All samples already analyzed")
+            return {sid: True for sid in sample_ids}
+
+        # Determine worker count
+        if max_workers is None:
+            max_workers = min(4, multiprocessing.cpu_count())
+
+        total = len(samples_to_analyze)
+        completed = 0
+        results: Dict[str, bool] = {}
+
+        logger.info(f"Parallel analysis: {total} samples with {max_workers} workers")
+
+        def analyze_one(sample_id: str) -> Tuple[str, bool, str]:
+            """Analyze a single sample. Returns (sample_id, success, error_msg)."""
+            try:
+                self._workspace.analyze_samples(sample_id=sample_id)
+                return (sample_id, True, "")
+            except Exception as e:
+                return (sample_id, False, str(e))
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                futures = {
+                    executor.submit(analyze_one, sid): sid
+                    for sid in samples_to_analyze
+                }
+
+                # Process completed tasks as they finish
+                for future in as_completed(futures):
+                    # Check for cancellation
+                    if cancellation_token and cancellation_token.is_cancelled:
+                        # Cancel pending futures
+                        for f in futures:
+                            f.cancel()
+                        raise CancellationError("Parallel analysis cancelled by user")
+
+                    sample_id, success, error = future.result()
+                    results[sample_id] = success
+
+                    if success:
+                        self._analyzed_samples.add(sample_id)
+                        logger.debug(f"Parallel analysis completed: {sample_id}")
+                    else:
+                        # Mark as attempted to avoid retrying
+                        self._analyzed_samples.add(sample_id)
+                        logger.warning(f"Parallel analysis failed for {sample_id}: {error}")
+
+                    completed += 1
+                    if progress_callback:
+                        progress_callback(completed, total)
+
+        except CancellationError:
+            raise
+        except Exception as e:
+            logger.error(f"Parallel analysis error: {type(e).__name__}: {e}")
+            # Fall back results for remaining samples
+            for sid in samples_to_analyze:
+                if sid not in results:
+                    results[sid] = False
+
+        # Garbage collection after parallel work
+        gc.collect()
+
+        success_count = sum(1 for v in results.values() if v)
+        logger.info(f"Parallel analysis complete: {success_count}/{total} successful")
+
+        # Include already-analyzed samples in results
+        for sid in sample_ids:
+            if sid not in results:
+                results[sid] = sid in self._analyzed_samples
+
+        return results
+
     def get_gate_statistics(
         self,
         sample_id: str,
@@ -855,6 +1080,26 @@ class WorkspaceModel:
                 logger.warning(f"No events in gate '{gate_id}' for sample '{sample_id}'")
                 return pd.DataFrame()
 
+            # Optimization: If specific channels requested, use selective loading
+            # This reduces memory usage significantly for MFI calculations
+            if channels and data_source in (DataSource.RAW, DataSource.COMP):
+                source = 'raw' if data_source == DataSource.RAW else 'comp'
+                logger.debug(f"Using selective channel loading for {len(channels)} channels")
+                try:
+                    events, columns = self._get_cached_events_selective(
+                        sample_id, source, channels
+                    )
+                    if events.size == 0:
+                        logger.error(f"Selective loading failed for channels: {channels}")
+                        return None
+                    # Apply gate membership filter
+                    gated_events = events[membership]
+                    logger.debug(f"Selective gated events shape: {gated_events.shape}")
+                    return pd.DataFrame(gated_events, columns=columns)
+                except Exception as e:
+                    logger.warning(f"Selective loading failed, falling back to full load: {e}")
+                    # Fall through to standard path
+
             # Get sample events (cached for performance)
             sample = self._workspace.get_sample(sample_id)
             events = None
@@ -877,11 +1122,15 @@ class WorkspaceModel:
                 comp_cache_key = f"{sample_id}:comp"
                 raw_cache_key = f"{sample_id}:raw"
 
-                if comp_cache_key in self._event_cache:
-                    events = self._event_cache[comp_cache_key]
+                # Try to get from cache using LRU cache API
+                cached_comp = self._event_cache.get(comp_cache_key)
+                cached_raw = self._event_cache.get(raw_cache_key)
+
+                if cached_comp is not None:
+                    events = cached_comp
                     source_used = 'comp'
-                elif raw_cache_key in self._event_cache:
-                    events = self._event_cache[raw_cache_key]
+                elif cached_raw is not None:
+                    events = cached_raw
                     source_used = 'raw'
                 else:
                     # Try compensated first, fallback to raw
