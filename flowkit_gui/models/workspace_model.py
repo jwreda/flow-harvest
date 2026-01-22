@@ -13,10 +13,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Set, Callable
+from urllib.parse import unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import multiprocessing
 import re
+from lxml import etree
 import flowkit as fk
 import pandas as pd
 import numpy as np
@@ -140,6 +142,27 @@ class ChannelInfo:
         if self.pns_label:
             return f"{self.pns_label} [{self.pnn_label}]"
         return self.pnn_label
+
+
+@dataclass
+class CompensationMatrixInfo:
+    """Information about a compensation matrix from the WSP file."""
+    name: str                    # Human-readable name (e.g., "Compensation-copy")
+    matrix_id: str               # UUID from transforms:id attribute
+    color: str                   # Hex color for display (e.g., "#00ccff")
+    spectral: bool               # True if spectral (OLS-based), False if conventional
+    detectors: List[str] = field(default_factory=list)  # Channel labels
+    editable: bool = False       # Whether matrix is user-editable
+    status: str = ""             # Processing status (e.g., "FINALIZED")
+
+
+@dataclass
+class SampleCompensationAssignment:
+    """Compensation assignment for a single sample."""
+    matrix_name: Optional[str]   # Name of assigned matrix, or None if no compensation
+    matrix_id: Optional[str]     # UUID of assigned matrix
+    color: Optional[str]         # Color of assigned matrix (for UI display)
+    spectral: Optional[bool]     # Whether assigned matrix is spectral
 
 
 class WorkspaceModel:
@@ -1361,3 +1384,262 @@ class WorkspaceModel:
     def compensation_status(self) -> Dict[str, str]:
         """Get cached compensation status from last scan."""
         return getattr(self, '_compensation_status', {})
+
+    def _parse_compensation_from_wsp(self) -> Tuple[
+        List[CompensationMatrixInfo],
+        Dict[str, SampleCompensationAssignment]
+    ]:
+        """
+        Parse compensation matrices and per-sample assignments directly from WSP XML.
+
+        FlowKit's API doesn't expose all compensation metadata (colors, UUIDs),
+        so we parse the WSP file directly to extract this information.
+
+        Returns:
+            Tuple of:
+            - List of global CompensationMatrixInfo objects
+            - Dict mapping sample_id to SampleCompensationAssignment
+        """
+        global_matrices: List[CompensationMatrixInfo] = []
+        sample_assignments: Dict[str, SampleCompensationAssignment] = {}
+
+        if not self._wsp_path or not self._wsp_path.exists():
+            logger.warning("WSP path not set or file doesn't exist")
+            return global_matrices, sample_assignments
+
+        try:
+            # Parse WSP XML
+            tree = etree.parse(str(self._wsp_path))
+            root = tree.getroot()
+
+            # Define namespaces used in FlowJo WSP files
+            ns = {
+                'transforms': 'http://www.isac-net.org/std/Gating-ML/v2.0/transformations',
+                'data-type': 'http://www.isac-net.org/std/Gating-ML/v2.0/datatypes'
+            }
+
+            # Build namespace-aware tag names
+            transforms_ns = '{http://www.isac-net.org/std/Gating-ML/v2.0/transformations}'
+            data_type_ns = '{http://www.isac-net.org/std/Gating-ML/v2.0/datatypes}'
+
+            # 1. Parse global matrices from <Matrices> section
+            matrices_section = root.find('.//Matrices')
+            if matrices_section is not None:
+                for matrix_el in matrices_section.findall(f'.//{transforms_ns}spilloverMatrix'):
+                    matrix_info = self._parse_spillover_matrix_element(matrix_el, transforms_ns, data_type_ns)
+                    if matrix_info:
+                        global_matrices.append(matrix_info)
+                        logger.debug(f"Found global matrix: {matrix_info.name} (color={matrix_info.color})")
+
+            logger.info(f"Parsed {len(global_matrices)} global compensation matrices from WSP")
+
+            # Build lookup by matrix_id for quick assignment
+            matrix_lookup = {m.matrix_id: m for m in global_matrices}
+
+            # 2. Parse per-sample compensation assignments
+            sample_list = root.find('.//SampleList')
+            if sample_list is not None:
+                for sample_el in sample_list.findall('.//Sample'):
+                    # Get sample ID from DataSet element
+                    dataset_el = sample_el.find('.//DataSet')
+                    if dataset_el is None:
+                        continue
+
+                    sample_id_attr = dataset_el.get('sampleID')
+                    if not sample_id_attr:
+                        continue
+
+                    # Find FlowKit's sample_id (which is the filename)
+                    # The sampleID in WSP is numeric, we need to map to filename
+                    uri = dataset_el.get('uri', '')
+                    # Extract filename from URI like "file:/path/to/A5%20M5.fcs"
+                    if uri:
+                        filename = unquote(uri.split('/')[-1]) if '/' in uri else unquote(uri)
+                    else:
+                        filename = None
+
+                    # Look for spilloverMatrix in this sample
+                    sample_matrix_el = sample_el.find(f'.//{transforms_ns}spilloverMatrix')
+
+                    if sample_matrix_el is not None:
+                        # Sample has compensation assigned
+                        matrix_id = sample_matrix_el.get(f'{transforms_ns}id', '')
+                        matrix_name = sample_matrix_el.get('name', '')
+                        color = sample_matrix_el.get('color', '#808080')
+                        spectral_str = sample_matrix_el.get('spectral', '0')
+                        spectral = spectral_str == '1'
+
+                        assignment = SampleCompensationAssignment(
+                            matrix_name=matrix_name,
+                            matrix_id=matrix_id,
+                            color=color,
+                            spectral=spectral
+                        )
+                    else:
+                        # No compensation for this sample
+                        assignment = SampleCompensationAssignment(
+                            matrix_name=None,
+                            matrix_id=None,
+                            color=None,
+                            spectral=None
+                        )
+
+                    # Map using filename (FlowKit's sample_id)
+                    if filename:
+                        sample_assignments[filename] = assignment
+
+            logger.info(f"Parsed compensation assignments for {len(sample_assignments)} samples")
+
+            # Log summary of assignments
+            with_comp = sum(1 for a in sample_assignments.values() if a.matrix_name is not None)
+            without_comp = sum(1 for a in sample_assignments.values() if a.matrix_name is None)
+            logger.info(f"Compensation assignments: {with_comp} with matrix, {without_comp} without")
+
+        except Exception as e:
+            logger.error(f"Failed to parse compensation from WSP: {type(e).__name__}: {e}")
+            import traceback
+            logger.debug(f"Full traceback:\n{traceback.format_exc()}")
+
+        return global_matrices, sample_assignments
+
+    def _parse_spillover_matrix_element(
+        self,
+        matrix_el: etree._Element,
+        transforms_ns: str,
+        data_type_ns: str
+    ) -> Optional[CompensationMatrixInfo]:
+        """Parse a single spilloverMatrix element into CompensationMatrixInfo."""
+        try:
+            name = matrix_el.get('name', 'Unknown')
+            matrix_id = matrix_el.get(f'{transforms_ns}id', '')
+            color = matrix_el.get('color', '#808080')  # Default gray
+            spectral_str = matrix_el.get('spectral', '0')
+            spectral = spectral_str == '1'
+            editable_str = matrix_el.get('editable', '0')
+            editable = editable_str == '1'
+            status = matrix_el.get('status', '')
+
+            # Parse detector list from parameters
+            detectors = []
+            params_el = matrix_el.find(f'.//{data_type_ns}parameters')
+            if params_el is not None:
+                for param_el in params_el.findall(f'.//{data_type_ns}parameter'):
+                    param_name = param_el.get(f'{data_type_ns}name', '')
+                    if param_name:
+                        detectors.append(param_name)
+
+            return CompensationMatrixInfo(
+                name=name,
+                matrix_id=matrix_id,
+                color=color,
+                spectral=spectral,
+                detectors=detectors,
+                editable=editable,
+                status=status
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse spillover matrix element: {e}")
+            return None
+
+    def get_workspace_compensation_info(self) -> Dict[str, Any]:
+        """
+        Get comprehensive compensation information from the workspace.
+
+        This method parses the WSP file directly to extract compensation
+        matrices with their colors and per-sample assignments.
+
+        Returns:
+            Dict with:
+            - 'global_matrices': List of CompensationMatrixInfo objects
+            - 'sample_assignments': Dict mapping sample_id to SampleCompensationAssignment
+            - 'summary': Dict with counts and matrix usage statistics
+        """
+        global_matrices, sample_assignments = self._parse_compensation_from_wsp()
+
+        # Build summary statistics
+        matrix_usage: Dict[str, int] = {}
+        samples_without_comp = 0
+
+        for assignment in sample_assignments.values():
+            if assignment.matrix_name:
+                matrix_usage[assignment.matrix_name] = matrix_usage.get(assignment.matrix_name, 0) + 1
+            else:
+                samples_without_comp += 1
+
+        summary = {
+            'total_matrices': len(global_matrices),
+            'samples_with_compensation': len(sample_assignments) - samples_without_comp,
+            'samples_without_compensation': samples_without_comp,
+            'matrix_usage': matrix_usage
+        }
+
+        return {
+            'global_matrices': global_matrices,
+            'sample_assignments': sample_assignments,
+            'summary': summary
+        }
+
+    def scan_compensation_status_from_wsp(
+        self,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[str, str]:
+        """
+        Scan compensation status using WSP-parsed assignments.
+
+        This is more accurate than scan_compensation_status() because it uses
+        the actual WSP assignments rather than trying to get compensated events.
+
+        For unmixed data without additional compensation, this correctly
+        returns 'none' (valid state) rather than 'missing' (error state).
+
+        Args:
+            progress_callback: Optional callback(current, total) for progress updates
+
+        Returns:
+            Dict mapping sample_id to status:
+            - 'valid': Has compensation matrix assigned in WSP
+            - 'none': No compensation assigned (valid for pure unmixed data)
+            - 'error': Error reading compensation info
+        """
+        status: Dict[str, str] = {}
+
+        if not self._workspace or not self._samples:
+            return status
+
+        # Parse WSP compensation info
+        _, sample_assignments = self._parse_compensation_from_wsp()
+
+        total = len(self._samples)
+        logger.info(f"Scanning compensation status (WSP-based) for {total} samples...")
+
+        for i, sample in enumerate(self._samples):
+            sample_id = sample.sample_id
+
+            if sample_id in sample_assignments:
+                assignment = sample_assignments[sample_id]
+                if assignment.matrix_name is not None:
+                    status[sample_id] = 'valid'
+                else:
+                    status[sample_id] = 'none'
+            else:
+                # Sample not found in WSP assignments - might be missing FCS
+                status[sample_id] = 'none'
+
+            if progress_callback:
+                progress_callback(i + 1, total)
+
+        # Summary logging
+        valid_count = sum(1 for s in status.values() if s == 'valid')
+        none_count = sum(1 for s in status.values() if s == 'none')
+        logger.info(f"Compensation scan (WSP-based) complete: {valid_count} with matrix, {none_count} without")
+
+        # Store for later access
+        self._compensation_status_wsp = status
+        self._compensation_assignments = sample_assignments
+
+        return status
+
+    @property
+    def compensation_assignments(self) -> Dict[str, SampleCompensationAssignment]:
+        """Get cached compensation assignments from last WSP-based scan."""
+        return getattr(self, '_compensation_assignments', {})

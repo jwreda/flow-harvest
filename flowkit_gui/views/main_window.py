@@ -1079,19 +1079,24 @@ class MainWindow(QMainWindow):
             progress.setValue(current)
             QApplication.processEvents()
 
-        comp_status = self._workspace_model.scan_compensation_status(
+        # Use WSP-based compensation scanning for accurate status with colors
+        comp_status = self._workspace_model.scan_compensation_status_from_wsp(
             progress_callback=update_progress
         )
         progress.close()
 
+        # Get compensation assignments with colors for UI display
+        comp_assignments = self._workspace_model.compensation_assignments
+
         # Get sample groups
         groups = self._workspace_model.get_sample_groups()
 
-        # Populate sample selection model
+        # Populate sample selection model with compensation info
         self._sample_selection_model.populate_from_groups(
             groups=groups,
             all_samples=self._workspace_model.samples,
             compensation_status=comp_status,
+            compensation_assignments=comp_assignments,
             default_selected=True
         )
         self._sample_selection_tree.expandAll()
@@ -1402,12 +1407,34 @@ class MainWindow(QMainWindow):
         total = summary.get("total", 0)
         self._sample_selection_header.setText(f"Sample Selection ({selected}/{total} selected)")
 
-        # Update compensation warning banner
-        missing_comp = summary.get("missing_compensation", 0)
-        if missing_comp > 0:
+        # Update compensation info banner
+        with_comp = summary.get("with_compensation", 0)
+        without_comp = summary.get("without_compensation", 0)
+        comp_error = summary.get("compensation_error", 0)
+
+        # Show banner with compensation summary
+        if comp_error > 0:
+            # Show warning for errors
             self._comp_warning_banner.setText(
-                f"⚠️ {missing_comp} selected sample(s) have missing compensation. "
+                f"⚠️ {comp_error} selected sample(s) have compensation errors. "
                 f"Using 'Force Compensated' will fail for these samples."
+            )
+            self._comp_warning_banner.setStyleSheet(
+                "background-color: #fef3c7; color: #92400e; padding: 8px; "
+                "border-radius: 4px; font-weight: bold;"
+            )
+            self._comp_warning_banner.setVisible(True)
+        elif with_comp > 0 or without_comp > 0:
+            # Show informational summary
+            parts = []
+            if with_comp > 0:
+                parts.append(f"{with_comp} with compensation")
+            if without_comp > 0:
+                parts.append(f"{without_comp} unmixed (no compensation)")
+            self._comp_warning_banner.setText(f"ℹ️ Selected: {', '.join(parts)}")
+            self._comp_warning_banner.setStyleSheet(
+                "background-color: #dbeafe; color: #1e40af; padding: 8px; "
+                "border-radius: 4px;"
             )
             self._comp_warning_banner.setVisible(True)
         else:

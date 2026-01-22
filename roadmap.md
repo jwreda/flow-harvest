@@ -2,6 +2,25 @@
 
 This file tracks planned enhancements and future feature ideas.
 
+## Urgent: Compensation & Unmixing
+
+See [docs/unmixing-vs-compensation.md](docs/unmixing-vs-compensation.md) for full explanation of these concepts.
+
+### Completed
+- [x] Document unmixing vs compensation distinction (2026-01-22)
+- [x] Parse per-sample compensation assignments from WSP with colors (2026-01-22)
+- [x] New WSP-based compensation scanning (distinguishes 'none' from 'missing') (2026-01-22)
+- [x] Show compensation matrix colors in sample list (colored dots) (2026-01-22)
+- [x] Update compensation info banner (blue informational vs yellow warning) (2026-01-22)
+
+### In Progress
+- [ ] Add collapsible compensation details panel with matrix legend
+
+### Planned
+- [ ] Handle edge cases (multiple matrices, missing assignments)
+- [ ] Export compensation matrix values to Excel
+- [ ] Allow user to override per-sample compensation assignments
+
 ## Planned Enhancements
 
 ### Matrix Interaction

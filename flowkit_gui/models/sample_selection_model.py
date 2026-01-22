@@ -7,11 +7,11 @@ This module provides:
 - Compensation status indicators
 """
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor, QIcon
 
-from .workspace_model import Sample
+from .workspace_model import Sample, SampleCompensationAssignment
 from ..utils.logging_config import get_logger
 
 logger = get_logger("sample_selection_model")
@@ -25,7 +25,7 @@ class SampleSelectionModel(QStandardItemModel):
     - Hierarchical display of groups with sample children
     - Samples can appear in multiple groups (checkboxes stay synced)
     - Tri-state group checkboxes based on child selection
-    - Compensation status icons (green/red dots)
+    - Compensation status with colored dots matching FlowJo matrix colors
     """
 
     COLUMN_SAMPLE = 0
@@ -51,8 +51,11 @@ class SampleSelectionModel(QStandardItemModel):
         # Store sample info for reference
         self._samples: Dict[str, Sample] = {}  # sample_id -> Sample
 
-        # Compensation status
+        # Compensation status (legacy: 'valid'/'missing')
         self._compensation_status: Dict[str, str] = {}
+
+        # Compensation assignments with colors (new: from WSP parsing)
+        self._compensation_assignments: Dict[str, SampleCompensationAssignment] = {}
 
         # Prevent recursive updates during sync
         self._updating = False
@@ -70,6 +73,7 @@ class SampleSelectionModel(QStandardItemModel):
         self._group_items.clear()
         self._samples.clear()
         self._compensation_status.clear()
+        self._compensation_assignments.clear()
         self._updating = False
 
     def populate_from_groups(
@@ -77,6 +81,7 @@ class SampleSelectionModel(QStandardItemModel):
         groups: Dict[str, List[str]],
         all_samples: List[Sample],
         compensation_status: Optional[Dict[str, str]] = None,
+        compensation_assignments: Optional[Dict[str, SampleCompensationAssignment]] = None,
         default_selected: bool = True
     ) -> None:
         """
@@ -85,7 +90,9 @@ class SampleSelectionModel(QStandardItemModel):
         Args:
             groups: Dict mapping group name to list of sample IDs
             all_samples: List of all Sample objects
-            compensation_status: Optional dict of sample_id -> 'valid'/'missing'
+            compensation_status: Optional dict of sample_id -> 'valid'/'missing'/'none'
+            compensation_assignments: Optional dict of sample_id -> SampleCompensationAssignment
+                                     (includes matrix color from WSP)
             default_selected: Whether samples are selected by default
         """
         self.clear_samples()
@@ -96,9 +103,11 @@ class SampleSelectionModel(QStandardItemModel):
             self._samples[sample.sample_id] = sample
             self._selection_state[sample.sample_id] = default_selected
 
-        # Store compensation status
+        # Store compensation status and assignments
         if compensation_status:
             self._compensation_status = compensation_status
+        if compensation_assignments:
+            self._compensation_assignments = compensation_assignments
 
         # Track which samples are in groups
         samples_in_groups: Set[str] = set()
@@ -172,24 +181,72 @@ class SampleSelectionModel(QStandardItemModel):
         if sample.event_count == 0:
             events_item.setForeground(QBrush(QColor("#888888")))
 
-        # Create compensation status column
-        comp_status = self._compensation_status.get(sample.sample_id, "")
-        status_item = QStandardItem()
-        status_item.setEditable(False)
-        if comp_status == "valid":
-            status_item.setText("✓")
-            status_item.setForeground(QBrush(QColor("#22c55e")))  # Green
-            status_item.setToolTip("Compensation available")
-        elif comp_status == "missing":
-            status_item.setText("✗")
-            status_item.setForeground(QBrush(QColor("#ef4444")))  # Red
-            status_item.setToolTip("Compensation missing")
-        else:
-            status_item.setText("?")
-            status_item.setForeground(QBrush(QColor("#888888")))
-            status_item.setToolTip("Compensation status unknown")
+        # Create compensation status column with colored dot
+        status_item = self._create_compensation_status_item(sample.sample_id)
 
         group_item.appendRow([item, events_item, status_item])
+
+    def _create_compensation_status_item(self, sample_id: str) -> QStandardItem:
+        """Create a status item showing compensation with colored dot.
+
+        Uses the compensation assignment color from WSP if available,
+        otherwise falls back to legacy status indicators.
+        """
+        status_item = QStandardItem()
+        status_item.setEditable(False)
+        status_item.setTextAlignment(Qt.AlignCenter)
+        self._apply_compensation_display(status_item, sample_id)
+        return status_item
+
+    def _apply_compensation_display(self, status_item: QStandardItem, sample_id: str) -> None:
+        """Apply compensation status display to a status item.
+
+        This is the single source of truth for compensation display logic,
+        used by both _create_compensation_status_item and _update_status_item_display.
+        """
+        # Color constants
+        COLOR_VALID = "#22c55e"      # Green - has compensation
+        COLOR_NONE = "#808080"       # Gray - no compensation (valid for unmixed)
+        COLOR_ERROR = "#ef4444"      # Red - compensation error
+        COLOR_UNKNOWN = "#888888"    # Dark gray - unknown status
+
+        # Try to use WSP-parsed assignment with color
+        assignment = self._compensation_assignments.get(sample_id)
+        if assignment is not None:
+            if assignment.matrix_name is not None:
+                # Has compensation - show colored dot with matrix color
+                color = assignment.color or COLOR_VALID
+                status_item.setText("●")
+                status_item.setForeground(QBrush(QColor(color)))
+                tooltip = f"Compensation: {assignment.matrix_name}"
+                if assignment.spectral:
+                    tooltip += " (spectral)"
+                status_item.setToolTip(tooltip)
+            else:
+                # No compensation assigned - gray dot (valid for unmixed data)
+                status_item.setText("○")
+                status_item.setForeground(QBrush(QColor(COLOR_NONE)))
+                status_item.setToolTip("No compensation (unmixed data)")
+            return
+
+        # Fall back to legacy status if no assignment info
+        comp_status = self._compensation_status.get(sample_id, "")
+        if comp_status == "valid":
+            status_item.setText("●")
+            status_item.setForeground(QBrush(QColor(COLOR_VALID)))
+            status_item.setToolTip("Compensation available")
+        elif comp_status == "none":
+            status_item.setText("○")
+            status_item.setForeground(QBrush(QColor(COLOR_NONE)))
+            status_item.setToolTip("No compensation (unmixed data)")
+        elif comp_status == "missing":
+            status_item.setText("✗")
+            status_item.setForeground(QBrush(QColor(COLOR_ERROR)))
+            status_item.setToolTip("Compensation error")
+        else:
+            status_item.setText("?")
+            status_item.setForeground(QBrush(QColor(COLOR_UNKNOWN)))
+            status_item.setToolTip("Compensation status unknown")
 
     def _add_sample_to_root(self, sample: Sample) -> None:
         """Add a sample directly to the root (no group)."""
@@ -203,9 +260,8 @@ class SampleSelectionModel(QStandardItemModel):
         events_item = QStandardItem(events_str)
         events_item.setEditable(False)
 
-        comp_status = self._compensation_status.get(sample.sample_id, "")
-        status_item = QStandardItem("✓" if comp_status == "valid" else "✗" if comp_status == "missing" else "?")
-        status_item.setEditable(False)
+        # Use colored dot status
+        status_item = self._create_compensation_status_item(sample.sample_id)
 
         self.appendRow([item, events_item, status_item])
 
@@ -349,28 +405,62 @@ class SampleSelectionModel(QStandardItemModel):
         """Get summary of selection state."""
         selected = sum(1 for v in self._selection_state.values() if v)
         total = len(self._selection_state)
-        valid_comp = sum(
-            1 for sid, sel in self._selection_state.items()
-            if sel and self._compensation_status.get(sid) == "valid"
-        )
-        missing_comp = sum(
-            1 for sid, sel in self._selection_state.items()
-            if sel and self._compensation_status.get(sid) == "missing"
-        )
+
+        # Count compensation status for selected samples
+        # Check assignments first (more accurate), fall back to legacy status
+        with_comp = 0
+        without_comp = 0
+        comp_error = 0
+
+        for sid, sel in self._selection_state.items():
+            if not sel:
+                continue
+
+            assignment = self._compensation_assignments.get(sid)
+            if assignment is not None:
+                if assignment.matrix_name is not None:
+                    with_comp += 1
+                else:
+                    without_comp += 1
+            else:
+                # Fall back to legacy status
+                status = self._compensation_status.get(sid, "")
+                if status == "valid":
+                    with_comp += 1
+                elif status == "none":
+                    without_comp += 1
+                elif status == "missing":
+                    comp_error += 1
+
         return {
             "selected": selected,
             "total": total,
-            "valid_compensation": valid_comp,
-            "missing_compensation": missing_comp
+            "with_compensation": with_comp,
+            "without_compensation": without_comp,
+            "compensation_error": comp_error,
+            # Legacy keys for compatibility
+            "valid_compensation": with_comp,
+            "missing_compensation": comp_error
         }
 
-    def update_compensation_status(self, status: Dict[str, str]) -> None:
-        """Update compensation status display for all samples."""
+    def update_compensation_status(
+        self,
+        status: Dict[str, str],
+        assignments: Optional[Dict[str, SampleCompensationAssignment]] = None
+    ) -> None:
+        """Update compensation status display for all samples.
+
+        Args:
+            status: Dict of sample_id -> 'valid'/'none'/'missing'/'error'
+            assignments: Optional dict of sample_id -> SampleCompensationAssignment
+                        (includes matrix color from WSP)
+        """
         self._compensation_status = status
+        if assignments:
+            self._compensation_assignments = assignments
 
         # Update status column for all sample items
         for sample_id, items in self._sample_items.items():
-            comp_status = status.get(sample_id, "")
             for item in items:
                 # Find the status column sibling
                 parent = item.parent()
@@ -378,11 +468,8 @@ class SampleSelectionModel(QStandardItemModel):
                     row = item.row()
                     status_item = parent.child(row, self.COLUMN_STATUS)
                     if status_item:
-                        if comp_status == "valid":
-                            status_item.setText("✓")
-                            status_item.setForeground(QBrush(QColor("#22c55e")))
-                            status_item.setToolTip("Compensation available")
-                        elif comp_status == "missing":
-                            status_item.setText("✗")
-                            status_item.setForeground(QBrush(QColor("#ef4444")))
-                            status_item.setToolTip("Compensation missing")
+                        self._update_status_item_display(status_item, sample_id)
+
+    def _update_status_item_display(self, status_item: QStandardItem, sample_id: str) -> None:
+        """Update a status item's display based on compensation info."""
+        self._apply_compensation_display(status_item, sample_id)
