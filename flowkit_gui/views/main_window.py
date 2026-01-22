@@ -324,8 +324,9 @@ class WorkspaceLoaderWorker(QThread):
                 ignore_missing=True
             )
 
-            self.progress.emit("Analyzing samples...")
-            self._workspace_model.analyze_samples()
+            # Note: analyze_samples() is now deferred to export time
+            # to reduce memory usage with large datasets (70+ samples)
+            self.progress.emit("Workspace loaded successfully")
 
             self.result.emit(num_samples, num_gates)
             self.finished.emit(True, "")
@@ -1525,16 +1526,27 @@ class MainWindow(QMainWindow):
                 descendant_depth=descendant_depth
             )
 
-            # Show progress dialog
-            progress = QProgressDialog("Exporting...", "Cancel", 0, 100, self)
+            # Show progress dialog with detailed status
+            progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
+            progress.setMinimumWidth(400)  # Wider to show detailed status
 
             def update_progress(current, total):
                 progress.setValue(int(current / total * 100))
 
-            # Export
-            exporter.export(file_path, progress_callback=update_progress)
+            def update_status(message):
+                progress.setLabelText(message)
+                # Process events to ensure UI updates during long operations
+                from PyQt5.QtWidgets import QApplication
+                QApplication.processEvents()
+
+            # Export with both progress and status callbacks
+            exporter.export(
+                file_path,
+                progress_callback=update_progress,
+                status_callback=update_status
+            )
 
             progress.close()
 
@@ -1564,6 +1576,10 @@ class MainWindow(QMainWindow):
                 "Export Error",
                 f"Failed to export data:\n{str(e)}"
             )
+        finally:
+            # Clear caches after export to free memory for large datasets
+            self._workspace_model.clear_cache()
+            logger.info("Cleared caches after export")
 
     def _on_about(self):
         """Show about dialog."""

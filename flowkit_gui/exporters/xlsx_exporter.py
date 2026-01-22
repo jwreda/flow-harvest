@@ -99,7 +99,8 @@ class XLSXExporter:
     def export(
         self,
         filepath: str,
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> None:
         """
         Export data to Excel workbook.
@@ -107,6 +108,7 @@ class XLSXExporter:
         Args:
             filepath: Path to save the Excel file
             progress_callback: Optional callback(current, total) for progress
+            status_callback: Optional callback(message) for detailed status updates
         """
         self._warnings.clear()
         wb = Workbook()
@@ -143,6 +145,8 @@ class XLSXExporter:
         current_step = 0
 
         # Sheet 1: Gating Strategy
+        if status_callback:
+            status_callback("Writing Gating_Strategy sheet...")
         ws_gates = wb.active
         ws_gates.title = "Gating_Strategy"
         self._write_gating_strategy(ws_gates)
@@ -151,6 +155,8 @@ class XLSXExporter:
             progress_callback(current_step, total_steps)
 
         # Sheet 2: Keywords (Tidy)
+        if status_callback:
+            status_callback("Writing Keywords sheet...")
         ws_keywords = wb.create_sheet("Keywords")
         self._write_keywords_tidy(ws_keywords)
         current_step += 1
@@ -159,6 +165,8 @@ class XLSXExporter:
 
         # Sheet 3 (optional): Keywords Wide
         if self._include_wide_keywords:
+            if status_callback:
+                status_callback("Writing Keywords_Wide sheet...")
             ws_keywords_wide = wb.create_sheet("Keywords_Wide")
             self._write_keywords_wide(ws_keywords_wide)
             current_step += 1
@@ -177,13 +185,16 @@ class XLSXExporter:
             logger.info(f"Filtering to {len(self._selected_sample_ids)} selected samples")
 
         logger.info(f"Pre-calculating statistics for {len(all_markers_combined)} markers...")
+        if status_callback:
+            status_callback("Calculating statistics...")
         stats_model = StatisticsModel(self._workspace, data_source=self._data_source)
         if all_markers_combined:
             stats_model.calculate_statistics(
                 self._gate_ids,
                 all_markers_combined,
                 self._mfi_metrics,
-                sample_ids=self._selected_sample_ids  # Filter by selected samples
+                sample_ids=self._selected_sample_ids,  # Filter by selected samples
+                status_callback=status_callback
             )
             calc_warnings = stats_model.get_warnings()
             if calc_warnings:
@@ -191,6 +202,8 @@ class XLSXExporter:
                 logger.debug(f"Collected {len(calc_warnings)} warnings from statistics calculation")
 
         # Sheet: Counts_All (wide format, counts only)
+        if status_callback:
+            status_callback("Writing Counts_All sheet...")
         ws_counts_all = wb.create_sheet("Counts_All")
         self._write_frequencies_wide_sheet(
             ws_counts_all, stats_model, self._gate_ids, "All Gates Counts",
@@ -202,6 +215,8 @@ class XLSXExporter:
 
         # Sheet: Counts_Selected (only if markers are selected)
         if has_selected_markers:
+            if status_callback:
+                status_callback("Writing Counts_Selected sheet...")
             ws_counts_selected = wb.create_sheet("Counts_Selected")
             self._write_frequencies_wide_sheet(
                 ws_counts_selected, stats_model, self._gate_ids, "Selected Gates Counts",
@@ -212,6 +227,8 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Frequencies_All (wide format, percentages only)
+        if status_callback:
+            status_callback("Writing Frequencies_All sheet...")
         ws_freq_all = wb.create_sheet("Frequencies_All")
         self._write_frequencies_wide_sheet(
             ws_freq_all, stats_model, self._gate_ids, "All Gates Frequencies",
@@ -223,6 +240,8 @@ class XLSXExporter:
 
         # Sheet: Frequencies_Selected (only if markers are selected)
         if has_selected_markers:
+            if status_callback:
+                status_callback("Writing Frequencies_Selected sheet...")
             ws_freq_selected = wb.create_sheet("Frequencies_Selected")
             self._write_frequencies_wide_sheet(
                 ws_freq_selected, stats_model, self._gate_ids, "Selected Gates Frequencies",
@@ -234,6 +253,8 @@ class XLSXExporter:
 
         # Optional: Tidy format sheets (counts and frequencies separate)
         if self._include_tidy_frequencies:
+            if status_callback:
+                status_callback("Writing Counts_All_Tidy sheet...")
             ws_counts_all_tidy = wb.create_sheet("Counts_All_Tidy")
             self._write_frequencies_tidy_sheet(
                 ws_counts_all_tidy, stats_model, self._gate_ids, "All Gates Counts Tidy",
@@ -245,6 +266,8 @@ class XLSXExporter:
 
             # Counts_Selected_Tidy (only if markers are selected)
             if has_selected_markers:
+                if status_callback:
+                    status_callback("Writing Counts_Selected_Tidy sheet...")
                 ws_counts_selected_tidy = wb.create_sheet("Counts_Selected_Tidy")
                 self._write_frequencies_tidy_sheet(
                     ws_counts_selected_tidy, stats_model, self._gate_ids, "Selected Gates Counts Tidy",
@@ -254,6 +277,8 @@ class XLSXExporter:
                 if progress_callback:
                     progress_callback(current_step, total_steps)
 
+            if status_callback:
+                status_callback("Writing Frequencies_All_Tidy sheet...")
             ws_freq_all_tidy = wb.create_sheet("Frequencies_All_Tidy")
             self._write_frequencies_tidy_sheet(
                 ws_freq_all_tidy, stats_model, self._gate_ids, "All Gates Frequencies Tidy",
@@ -265,6 +290,8 @@ class XLSXExporter:
 
             # Frequencies_Selected_Tidy (only if markers are selected)
             if has_selected_markers:
+                if status_callback:
+                    status_callback("Writing Frequencies_Selected_Tidy sheet...")
                 ws_freq_selected_tidy = wb.create_sheet("Frequencies_Selected_Tidy")
                 self._write_frequencies_tidy_sheet(
                     ws_freq_selected_tidy, stats_model, self._gate_ids, "Selected Gates Frequencies Tidy",
@@ -276,6 +303,8 @@ class XLSXExporter:
 
         # Sheet: MFI_Selected - Pure MFI only (no gate stats)
         if has_selected_markers:
+            if status_callback:
+                status_callback("Writing MFI_Selected sheet...")
             ws_mfi_selected = wb.create_sheet("MFI_Selected")
             if self._matrix_selections:
                 self._write_statistics_sheet_sparse(
@@ -298,6 +327,8 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: MFI_All - Pure MFI only (no gate stats)
+        if status_callback:
+            status_callback("Writing MFI_All sheet...")
         ws_mfi_all = wb.create_sheet("MFI_All")
         self._write_statistics_sheet(
             ws_mfi_all,
@@ -312,6 +343,8 @@ class XLSXExporter:
 
         # Sheet: Concatenated_Selected - Gate stats + sparse MFI
         if has_selected_markers:
+            if status_callback:
+                status_callback("Writing Concatenated_Selected sheet...")
             ws_concat_selected = wb.create_sheet("Concatenated_Selected")
             if self._matrix_selections:
                 self._write_statistics_sheet_sparse(
@@ -334,6 +367,8 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Concatenated_All - All gate stats + all MFI
+        if status_callback:
+            status_callback("Writing Concatenated_All sheet...")
         ws_concat_all = wb.create_sheet("Concatenated_All")
         self._write_statistics_sheet(
             ws_concat_all,
@@ -349,6 +384,8 @@ class XLSXExporter:
         # Write normalized frequency sheets if reference gates are selected
         if self._reference_gate_ids:
             logger.info(f"Generating normalized frequency sheets for {len(self._reference_gate_ids)} reference gates")
+            if status_callback:
+                status_callback("Calculating normalized frequencies...")
 
             # Wide format: one sheet per reference gate
             normalized_wide = stats_model.calculate_normalized_frequencies(
@@ -363,12 +400,16 @@ class XLSXExporter:
 
             for ref_gate_id, df in normalized_wide.items():
                 if not df.empty:
+                    if status_callback:
+                        status_callback(f"Writing normalized frequency sheet for {ref_gate_id}...")
                     sheet_name = self._write_normalized_frequency_sheet(
                         wb, ref_gate_id, df, existing_sheet_names
                     )
                     logger.debug(f"Created sheet '{sheet_name}' for reference gate '{ref_gate_id}'")
 
             # Tidy format: combined sheet
+            if status_callback:
+                status_callback("Writing normalized frequencies tidy sheet...")
             normalized_tidy = stats_model.calculate_normalized_frequencies_tidy(
                 reference_gate_ids=self._reference_gate_ids,
                 sample_ids=self._selected_sample_ids,
@@ -381,11 +422,15 @@ class XLSXExporter:
 
         # Sheet (if warnings): Warnings
         if self._warnings:
+            if status_callback:
+                status_callback("Writing Warnings sheet...")
             ws_warnings = wb.create_sheet("Warnings")
             self._write_warnings(ws_warnings)
             logger.warning(f"Export completed with {len(self._warnings)} warnings")
 
         # Save workbook
+        if status_callback:
+            status_callback("Saving Excel file...")
         wb.save(filepath)
         logger.info(f"Export saved to {filepath}")
 

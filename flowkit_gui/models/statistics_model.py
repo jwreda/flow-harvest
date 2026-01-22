@@ -77,7 +77,8 @@ class StatisticsModel:
         channels: List[str],
         metrics: List[MFIMetric],
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        sample_ids: Optional[List[str]] = None
+        sample_ids: Optional[List[str]] = None,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> None:
         """
         Calculate statistics for specified gates and channels.
@@ -88,6 +89,7 @@ class StatisticsModel:
             metrics: List of MFI metrics to calculate
             progress_callback: Optional callback(current, total) for progress
             sample_ids: Optional list of sample IDs to include (None = all samples)
+            status_callback: Optional callback(message) for status updates
         """
         self._statistics.clear()
         self._warnings.clear()
@@ -110,9 +112,13 @@ class StatisticsModel:
         samples_with_errors = 0
         successful_calcs = 0
 
-        for sample in samples:
+        for sample_idx, sample in enumerate(samples):
             sample_id = sample.sample_id
             self._statistics[sample_id] = {}
+
+            # Report sample progress
+            if status_callback:
+                status_callback(f"Processing sample {sample_idx + 1}/{len(samples)}: {sample.name}")
 
             # Check if sample has FCS data
             if not self._workspace.has_fcs_data(sample_id):

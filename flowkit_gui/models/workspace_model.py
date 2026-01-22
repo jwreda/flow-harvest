@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Set
+import gc
 import re
 import flowkit as fk
 import pandas as pd
@@ -160,6 +161,8 @@ class WorkspaceModel:
         # Caches for performance optimization
         self._event_cache: Dict[str, np.ndarray] = {}  # "sample_id:source" -> events array
         self._membership_cache: Dict[Tuple[str, str], np.ndarray] = {}  # (sample_id, gate_id) -> membership
+        # Track which samples have been analyzed (for on-demand analysis)
+        self._analyzed_samples: Set[str] = set()
 
     @property
     def is_loaded(self) -> bool:
@@ -196,13 +199,40 @@ class WorkspaceModel:
         cache_size = len(self._event_cache) + len(self._membership_cache)
         self._event_cache.clear()
         self._membership_cache.clear()
+        self._analyzed_samples.clear()  # Clear analysis tracking too
+        gc.collect()  # Force garbage collection to release memory
         if cache_size > 0:
-            logger.info(f"Cleared {cache_size} cached items")
+            logger.info(f"Cleared {cache_size} cached items and ran garbage collection")
+
+    def _ensure_sample_analyzed(self, sample_id: str) -> None:
+        """Ensure a sample has been analyzed (on-demand analysis).
+
+        FlowKit requires samples to be analyzed before gate membership
+        or statistics can be computed. This method ensures analysis
+        happens lazily, only when needed.
+        """
+        if sample_id in self._analyzed_samples:
+            return
+
+        if not self._workspace:
+            return
+
+        try:
+            logger.debug(f"On-demand analysis for sample: {sample_id}")
+            self._workspace.analyze_samples(sample_id=sample_id)
+            self._analyzed_samples.add(sample_id)
+            logger.debug(f"Successfully analyzed sample: {sample_id}")
+        except Exception as e:
+            logger.warning(f"Failed to analyze sample {sample_id}: {e}")
+            # Still mark as attempted to avoid repeated failures
+            self._analyzed_samples.add(sample_id)
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
         """Get events from cache or load and cache them."""
         cache_key = f"{sample_id}:{source}"
         if cache_key not in self._event_cache:
+            # Ensure sample is analyzed before getting events (on-demand)
+            self._ensure_sample_analyzed(sample_id)
             sample = self._workspace.get_sample(sample_id)
             self._event_cache[cache_key] = sample.get_events(source=source)
             logger.debug(f"Cached events for {cache_key}")
@@ -216,6 +246,8 @@ class WorkspaceModel:
         """Get gate membership from cache or compute and cache it."""
         cache_key = (sample_id, gate_id)
         if cache_key not in self._membership_cache:
+            # Ensure sample is analyzed before getting membership (on-demand)
+            self._ensure_sample_analyzed(sample_id)
             fk_path = self.get_fk_gate_path(gate_id)
             # Extract gate name from full-path gate_id for FlowKit API
             gate_name = self._get_gate_name_from_id(gate_id)
@@ -647,7 +679,8 @@ class WorkspaceModel:
         self,
         sample_ids: Optional[List[str]] = None,
         gate_ids: Optional[List[str]] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        batch_callback: Optional[callable] = None
     ) -> None:
         """
         Run analysis on samples to calculate gate statistics.
@@ -656,6 +689,7 @@ class WorkspaceModel:
             sample_ids: List of sample IDs to analyze (default: all)
             gate_ids: List of gate IDs to include (default: all)
             progress_callback: Optional callback for progress updates (receives current, total)
+            batch_callback: Optional callback for batch progress (receives batch_num, total_batches, batch_description)
         """
         if not self._workspace:
             return
@@ -666,51 +700,49 @@ class WorkspaceModel:
         total = len(sample_ids)
         all_samples = len(sample_ids) == len(self._samples)
 
-        # Use batch processing when analyzing all samples (much faster)
-        if all_samples:
-            logger.info(f"Analyzing {total} samples using batch processing...")
-            try:
-                # FlowKit's analyze_samples with sample_id=None processes all samples
-                # cache_events=True caches pre-processed events for faster MFI calculations
-                #
-                # Disable multiprocessing on macOS to avoid CoreFoundation fork issues.
-                # Python's multiprocessing uses fork() by default on macOS, but macOS
-                # doesn't allow certain CoreFoundation APIs after fork, causing crashes
-                # with messages like "The process has forked and you cannot use this
-                # CoreFoundation functionality safely"
-                import sys
-                use_multiprocessing = sys.platform != 'darwin'
-                if not use_multiprocessing:
-                    logger.info("Multiprocessing disabled on macOS for stability")
+        # Process samples in batches to limit peak memory usage
+        # Batch size of 10 keeps memory footprint manageable for large datasets
+        batch_size = 10
+        logger.info(f"Analyzing {total} samples in batches of {batch_size}...")
 
-                self._workspace.analyze_samples(
-                    sample_id=None,
-                    cache_events=True,
-                    use_mp=use_multiprocessing,
-                    verbose=False
-                )
-                logger.info(f"Successfully analyzed {total} samples in batch mode")
-                if progress_callback:
-                    progress_callback(total, total)
-                return
-            except Exception as e:
-                logger.warning(f"Batch analysis failed ({type(e).__name__}: {e}), falling back to sequential")
-                import traceback
-                logger.debug(f"Batch analysis traceback:\n{traceback.format_exc()}")
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch = sample_ids[batch_start:batch_end]
+            batch_num = (batch_start // batch_size) + 1
+            total_batches = (total + batch_size - 1) // batch_size
 
-        # Sequential fallback (for partial analysis or if batch fails)
-        for i, sample_id in enumerate(sample_ids):
-            try:
-                logger.info(f"Analyzing sample: {sample_id}")
-                self._workspace.analyze_samples(sample_id=sample_id)
-                logger.info(f"Successfully analyzed: {sample_id}")
-                if progress_callback:
-                    progress_callback(i + 1, total)
-            except Exception as e:
-                logger.error(f"analyze_sample FAILED for {sample_id}: {type(e).__name__}: {e}")
-                import traceback
-                logger.debug(f"Full traceback:\n{traceback.format_exc()}")
-                continue
+            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} samples)")
+
+            # Notify batch progress
+            if batch_callback:
+                batch_callback(batch_num, total_batches, f"Analyzing batch {batch_num}/{total_batches}")
+
+            for i, sample_id in enumerate(batch):
+                try:
+                    # Skip if already analyzed (on-demand analysis may have done it)
+                    if sample_id in self._analyzed_samples:
+                        logger.debug(f"Sample {sample_id} already analyzed, skipping")
+                        continue
+
+                    logger.debug(f"Analyzing sample: {sample_id}")
+                    self._workspace.analyze_samples(sample_id=sample_id)
+                    self._analyzed_samples.add(sample_id)
+
+                    if progress_callback:
+                        progress_callback(batch_start + i + 1, total)
+                except Exception as e:
+                    logger.error(f"analyze_sample FAILED for {sample_id}: {type(e).__name__}: {e}")
+                    import traceback
+                    logger.debug(f"Full traceback:\n{traceback.format_exc()}")
+                    # Mark as attempted to avoid retrying
+                    self._analyzed_samples.add(sample_id)
+                    continue
+
+            # Force garbage collection between batches to release memory
+            gc.collect()
+            logger.debug(f"Garbage collection after batch {batch_num}")
+
+        logger.info(f"Successfully analyzed {len(self._analyzed_samples)} samples")
 
     def get_gate_statistics(
         self,
