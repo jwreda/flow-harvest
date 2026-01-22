@@ -441,7 +441,9 @@ class GateMarkerMatrixView(QWidget):
 
         # Use custom colored depth header for rows (gate names with colored dots)
         colored_header = ColoredDepthHeaderView(Qt.Vertical, self._table_view)
-        colored_header.setFixedWidth(500)  # Initial width for gate names column
+        colored_header.setMinimumWidth(150)
+        colored_header.setMaximumWidth(800)
+        colored_header.setFixedWidth(200)  # Initial default, will auto-size when model loaded
         self._table_view.setVerticalHeader(colored_header)
         v_header = self._table_view.verticalHeader()
         v_header.setVisible(True)
@@ -544,11 +546,13 @@ class GateMarkerMatrixView(QWidget):
         # Connect to model signals
         model.selectionChanged.connect(self._update_summary)
         model.modelReset.connect(self._update_info_label)
+        model.modelReset.connect(self._auto_size_gate_header)
 
         # Update zoom
         self._apply_zoom()
         self._update_summary()
         self._update_info_label()
+        self._auto_size_gate_header()
 
     def _update_info_label(self) -> None:
         """Update the info label based on model state."""
@@ -561,6 +565,29 @@ class GateMarkerMatrixView(QWidget):
                 self._info_label.setText("No gates or markers available")
         else:
             self._info_label.setText("Load a workspace to see gates and markers")
+
+    def _auto_size_gate_header(self) -> None:
+        """Calculate and set appropriate width for gate name header based on content."""
+        if not self._model or self._model.rowCount() == 0:
+            return
+
+        v_header = self._table_view.verticalHeader()
+        fm = v_header.fontMetrics()
+        max_width = 150  # Minimum width
+
+        for row in range(self._model.rowCount()):
+            gate_name = self._model.headerData(row, Qt.Vertical, Qt.DisplayRole)
+            depth = self._model.headerData(row, Qt.Vertical, Qt.UserRole) or 0
+
+            # Calculate width: left margin + depth dots + text margin + text + right margin
+            dot_width = depth * 10  # DOT_SIZE (8) + DOT_SPACING (2)
+            text_width = fm.horizontalAdvance(str(gate_name)) if gate_name else 0
+            row_width = 12 + dot_width + 6 + text_width + 12  # margins
+            max_width = max(max_width, row_width)
+
+        # Apply with bounds (min 150, max 600)
+        final_width = min(max(max_width, 150), 600)
+        v_header.setFixedWidth(final_width)
 
     def _update_summary(self) -> None:
         """Update the selection summary label."""

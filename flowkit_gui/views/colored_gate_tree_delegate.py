@@ -12,6 +12,7 @@ from PyQt5.QtGui import QPainter, QColor, QBrush, QPen
 from PyQt5.QtCore import Qt, QRect, QSize
 
 from .gate_marker_matrix_view import DEPTH_COLORS
+from ..utils.theme import get_colors
 
 
 class ColoredGateTreeDelegate(QStyledItemDelegate):
@@ -24,10 +25,8 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
     Also provides selection/hover accent styling.
     """
 
-    # Colors from the Deep Rose palette
-    SELECTION_COLOR = "#FFDBE8"  # Rose Tint
+    # Accent color (same in both themes)
     ACCENT_COLOR = "#E91E8C"     # Deep Rose
-    HOVER_COLOR = "#FFF0F5"      # Light Blush
 
     # Dot styling (matching ColoredDepthHeaderView)
     DOT_SIZE = 8
@@ -55,9 +54,14 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
         is_hovered = option.state & QStyle.State_MouseOver
         is_enabled = option.state & QStyle.State_Enabled
 
+        # Get theme-aware colors
+        colors = get_colors()
+        selection_color = colors["selection"]
+        hover_color = colors["hover"]
+
         # Draw background based on state
         if is_selected:
-            painter.fillRect(option.rect, QColor(self.SELECTION_COLOR))
+            painter.fillRect(option.rect, QColor(selection_color))
             # 3px accent bar on left
             accent_rect = QRect(
                 option.rect.left(),
@@ -67,7 +71,7 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
             )
             painter.fillRect(accent_rect, QColor(self.ACCENT_COLOR))
         elif is_hovered:
-            painter.fillRect(option.rect, QColor(self.HOVER_COLOR))
+            painter.fillRect(option.rect, QColor(hover_color))
 
         # Get depth from item data
         depth = index.data(self.DEPTH_ROLE)

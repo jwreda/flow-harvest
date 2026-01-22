@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QHeaderView, QAbstractItemView, QScrollArea, QGridLayout,
     QFrame, QRadioButton, QButtonGroup, QTabWidget, QListWidget,
     QListWidgetItem, QActionGroup, QDialog, QDialogButtonBox,
-    QTextEdit
+    QTextEdit, QApplication
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence
@@ -1059,9 +1059,30 @@ class MainWindow(QMainWindow):
         # Update keywords model
         self._keywords_model.set_samples(self._workspace_model.samples)
 
-        # Scan compensation status (in background would be better, but keep it simple for now)
+        # Scan compensation status with progress dialog
         self._statusbar.showMessage("Scanning compensation status...")
-        comp_status = self._workspace_model.scan_compensation_status()
+        num_samples_total = len(self._workspace_model.samples)
+
+        # Create progress dialog with minimum duration so it only shows if slow
+        progress = QProgressDialog(
+            "Scanning compensation status...",
+            None,  # No cancel button for this operation
+            0,
+            num_samples_total,
+            self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(500)  # Only show if takes > 500ms
+        progress.setWindowTitle("Scanning Compensation")
+
+        def update_progress(current, total):
+            progress.setValue(current)
+            QApplication.processEvents()
+
+        comp_status = self._workspace_model.scan_compensation_status(
+            progress_callback=update_progress
+        )
+        progress.close()
 
         # Get sample groups
         groups = self._workspace_model.get_sample_groups()

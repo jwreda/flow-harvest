@@ -85,6 +85,10 @@ class GateTreeModel(QStandardItemModel):
         self._use_full_names: bool = True  # Full (disambiguated) vs short names
         self._display_names: Dict[str, str] = {}  # gate_id -> display name
         self._available_gate_ids: Set[str] = set()  # Gates available for selected samples
+        self._updating: bool = False  # Prevents recursive signal loops
+
+        # Connect itemChanged to propagate deselection to children
+        self.itemChanged.connect(self._on_item_changed)
 
     def clear_gates(self):
         """Clear all gates from the model."""
@@ -92,6 +96,8 @@ class GateTreeModel(QStandardItemModel):
         self.setHorizontalHeaderLabels(["Gate", "Ref", "Events", "% Parent"])
         self._gates.clear()
         self._reference_gates.clear()
+        self._display_names.clear()
+        self._available_gate_ids.clear()
 
     def populate_from_hierarchy(self, gates: List[Gate]) -> None:
         """
@@ -199,6 +205,36 @@ class GateTreeModel(QStandardItemModel):
             item = self.item(i, self.COLUMN_GATE)
             if item:
                 traverse(item)
+
+    def _on_item_changed(self, item: QStandardItem) -> None:
+        """Handle item checkbox changes - propagate deselection to children."""
+        if self._updating:
+            return
+
+        # Only handle COLUMN_GATE changes
+        if item.column() != self.COLUMN_GATE:
+            return
+
+        # Only propagate when unchecking (not when checking)
+        if item.checkState() == Qt.Unchecked:
+            self._updating = True
+            try:
+                self._uncheck_children(item)
+            finally:
+                self._updating = False
+
+    def _uncheck_children(self, item: QStandardItem) -> None:
+        """Recursively uncheck all children of an item."""
+        for i in range(item.rowCount()):
+            child = item.child(i, self.COLUMN_GATE)
+            if child:
+                child.setCheckState(Qt.Unchecked)
+                # Update internal gate state
+                gate_id = child.data(Qt.UserRole)
+                if gate_id and gate_id in self._gates:
+                    self._gates[gate_id].is_selected = False
+                # Recurse to grandchildren
+                self._uncheck_children(child)
 
     def get_gate_by_id(self, gate_id: str) -> Optional[Gate]:
         """Get a Gate object by its ID."""

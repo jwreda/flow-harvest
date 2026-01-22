@@ -10,11 +10,15 @@ This module provides:
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
+import gc
 import pandas as pd
 import numpy as np
 
 from .workspace_model import WorkspaceModel, Sample, DataSource
-from ..utils.mfi_calculations import calculate_mean, calculate_median, calculate_geometric_mean
+from ..utils.mfi_calculations import (
+    calculate_mean, calculate_median, calculate_geometric_mean,
+    calculate_all_mfi_optimized
+)
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
 
@@ -149,6 +153,11 @@ class StatisticsModel:
                 if progress_callback:
                     progress_callback(current, total_work)
 
+            # Periodic garbage collection to prevent memory accumulation
+            # DataFrames created for each sample/gate combo can accumulate without cleanup
+            if (sample_idx + 1) % 10 == 0:
+                gc.collect()
+
         logger.info(f"Statistics calculation complete: {successful_calcs} successful, {samples_with_errors} with errors")
 
     def _calculate_gate_stats(
@@ -199,14 +208,14 @@ class StatisticsModel:
                     for channel in channels:
                         if channel in events_df.columns:
                             channel_data = events_df[channel].values
-                            stats.mfi_values[channel] = {}
 
-                            if MFIMetric.MEAN in metrics:
-                                stats.mfi_values[channel]['Mean'] = calculate_mean(channel_data)
-                            if MFIMetric.MEDIAN in metrics:
-                                stats.mfi_values[channel]['Median'] = calculate_median(channel_data)
-                            if MFIMetric.GEOMETRIC_MEAN in metrics:
-                                stats.mfi_values[channel]['GeoMean'] = calculate_geometric_mean(channel_data)
+                            # Use optimized single-pass calculation
+                            stats.mfi_values[channel] = calculate_all_mfi_optimized(
+                                channel_data,
+                                include_mean=MFIMetric.MEAN in metrics,
+                                include_median=MFIMetric.MEDIAN in metrics,
+                                include_geomean=MFIMetric.GEOMETRIC_MEAN in metrics
+                            )
 
                             channels_calculated += 1
                         else:

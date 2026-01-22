@@ -864,17 +864,43 @@ class XLSXExporter:
             cell.fill = header_fill
             cell.alignment = header_alignment
 
-    def _autofit_columns(self, ws, max_width: int = 50) -> None:
-        """Auto-fit column widths based on content."""
+    def _autofit_columns(self, ws, max_width: int = 50, max_sample_rows: int = 100) -> None:
+        """
+        Auto-fit column widths based on sampled content.
+
+        Instead of iterating all cells (O(rows x columns)), samples up to
+        max_sample_rows evenly distributed throughout the data to estimate
+        column widths efficiently.
+
+        Args:
+            ws: Worksheet to auto-fit
+            max_width: Maximum column width
+            max_sample_rows: Maximum number of rows to sample for width estimation
+        """
         for column_cells in ws.columns:
             max_length = 0
             column = column_cells[0].column_letter
+            total_rows = len(column_cells)
 
-            for cell in column_cells:
+            # Determine which rows to sample
+            if total_rows <= max_sample_rows:
+                # Small dataset - check all rows
+                sample_indices = range(total_rows)
+            else:
+                # Large dataset - sample evenly distributed rows
+                # Always include header (index 0) and last row
+                step = total_rows / max_sample_rows
+                sample_indices = [int(i * step) for i in range(max_sample_rows)]
+                # Ensure we include the header row
+                if 0 not in sample_indices:
+                    sample_indices[0] = 0
+
+            for idx in sample_indices:
                 try:
+                    cell = column_cells[idx]
                     cell_length = len(str(cell.value)) if cell.value else 0
                     max_length = max(max_length, cell_length)
-                except Exception:
+                except (IndexError, Exception):
                     pass
 
             # Add padding and cap at max_width
@@ -890,8 +916,8 @@ class XLSXExporter:
         """
         Write DataFrame rows to worksheet efficiently.
 
-        This method replaces slow iterrows() with vectorized operations
-        for significantly better performance on large datasets.
+        This method streams rows one at a time to avoid memory spikes from
+        creating full copies of the data (e.g., via df.values.tolist()).
 
         Args:
             ws: Worksheet to write to
@@ -908,8 +934,9 @@ class XLSXExporter:
                     return round(val, decimal_places)
                 return val
 
-            # Use applymap for efficient conversion, then convert to rows
-            for row in df.values.tolist():
+            # Stream row-by-row to avoid memory spike from tolist()
+            for idx in range(len(df)):
+                row = df.iloc[idx].values
                 ws.append([convert_value(v) for v in row])
         else:
             # Simple case: use dataframe_to_rows (already imported)

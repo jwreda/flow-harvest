@@ -204,6 +204,84 @@ class TestGateTreeModel:
         model.deselect_all()
         assert len(model.get_selected_gates()) == 0
 
+    def test_deselection_propagates_to_children(self, qapp):
+        """Test that unchecking a parent gate unchecks all children."""
+        model = GateTreeModel()
+
+        grandchild = Gate(
+            gate_id="cd4",
+            name="CD4+",
+            path=("Cells", "Live", "CD4+"),
+            gate_type="RectangleGate"
+        )
+        child = Gate(
+            gate_id="live",
+            name="Live",
+            path=("Cells", "Live"),
+            gate_type="PolygonGate",
+            children=[grandchild]
+        )
+        parent = Gate(
+            gate_id="cells",
+            name="Cells",
+            path=("Cells",),
+            gate_type="PolygonGate",
+            children=[child]
+        )
+
+        model.populate_from_hierarchy([parent])
+
+        # All should be selected initially
+        assert len(model.get_selected_gates()) == 3
+
+        # Uncheck the parent
+        model.item(0, 0).setCheckState(Qt.Unchecked)
+
+        # All children should now be unchecked
+        selected = model.get_selected_gates()
+        assert len(selected) == 0
+
+        # Verify internal state is also updated
+        assert model.get_gate_by_id("live").is_selected is False
+        assert model.get_gate_by_id("cd4").is_selected is False
+
+    def test_selection_does_not_propagate_to_children(self, qapp):
+        """Test that checking a parent does NOT auto-check children."""
+        model = GateTreeModel()
+
+        child = Gate(
+            gate_id="live",
+            name="Live",
+            path=("Cells", "Live"),
+            gate_type="PolygonGate",
+            is_selected=False
+        )
+        parent = Gate(
+            gate_id="cells",
+            name="Cells",
+            path=("Cells",),
+            gate_type="PolygonGate",
+            children=[child],
+            is_selected=False
+        )
+
+        model.populate_from_hierarchy([parent])
+
+        # Verify initial state - both unchecked
+        assert len(model.get_selected_gates()) == 0
+
+        # Check the parent
+        model.item(0, 0).setCheckState(Qt.Checked)
+
+        # Child should remain unchecked
+        child_item = model.item(0, 0).child(0, 0)
+        assert child_item.checkState() == Qt.Unchecked
+
+        # Only parent should be selected
+        selected = model.get_selected_gates()
+        assert len(selected) == 1
+        assert selected[0].gate_id == "cells"
+
     def test_clear_gates(self, qapp):
         """Test clearing all gates."""
         model = GateTreeModel()

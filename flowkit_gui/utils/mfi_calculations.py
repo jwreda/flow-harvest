@@ -112,3 +112,60 @@ def calculate_all_mfi(
         result['GeoMean'] = calculate_geometric_mean(values)
 
     return result
+
+
+def calculate_all_mfi_optimized(
+    values: ArrayLike,
+    include_mean: bool = True,
+    include_median: bool = True,
+    include_geomean: bool = True
+) -> dict:
+    """
+    Calculate all MFI metrics with minimized array operations.
+
+    This optimized version:
+    - Converts to numpy array only once
+    - Filters positive values only once (for geomean)
+    - Avoids redundant array copies
+
+    Args:
+        values: Array-like of numeric values
+        include_mean: Include arithmetic mean
+        include_median: Include median
+        include_geomean: Include geometric mean
+
+    Returns:
+        Dict with keys 'Mean', 'Median', 'GeoMean' as applicable
+    """
+    # Single array conversion
+    arr = np.asarray(values, dtype=np.float64)
+
+    result = {}
+
+    if len(arr) == 0:
+        if include_mean:
+            result['Mean'] = np.nan
+        if include_median:
+            result['Median'] = np.nan
+        if include_geomean:
+            result['GeoMean'] = np.nan
+        return result
+
+    # Calculate mean and median on full array
+    if include_mean:
+        result['Mean'] = float(np.mean(arr))
+
+    if include_median:
+        result['Median'] = float(np.median(arr))
+
+    # Geometric mean requires positive values only
+    if include_geomean:
+        positive_mask = arr > 0
+        positive_values = arr[positive_mask]
+
+        if len(positive_values) == 0:
+            result['GeoMean'] = np.nan
+        else:
+            result['GeoMean'] = float(stats.gmean(positive_values))
+
+    return result
