@@ -11,7 +11,7 @@ This module provides the main application window with:
 
 import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Set
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -34,6 +34,7 @@ from ..models.sample_selection_model import SampleSelectionModel
 from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
 from .gate_marker_matrix_view import GateMarkerMatrixView
 from .styled_tree_delegate import AccentedTreeItemDelegate
+from .colored_gate_tree_delegate import ColoredGateTreeDelegate
 from ..exporters.xlsx_exporter import XLSXExporter
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
@@ -389,6 +390,8 @@ class MainWindow(QMainWindow):
         # UI state
         self._selected_markers: List[str] = []
         self._marker_checkboxes: dict = {}
+        self._use_full_gate_names: bool = True  # Shared state for full/short name toggle
+        self._available_gate_ids: Set[str] = set()  # Gates available for selected samples
 
         # Initialize UI
         self._init_menu()
@@ -566,8 +569,8 @@ class MainWindow(QMainWindow):
         # Connect itemChanged signal to sync reference gates when user clicks checkboxes
         self._gate_tree_model.itemChanged.connect(self._on_gate_item_changed)
 
-        # Apply custom delegate for selection accent bar
-        self._gate_tree_delegate = AccentedTreeItemDelegate(self._gate_tree_view)
+        # Apply custom delegate for colored depth dots and selection accent
+        self._gate_tree_delegate = ColoredGateTreeDelegate(self._gate_tree_view)
         self._gate_tree_view.setItemDelegate(self._gate_tree_delegate)
 
         layout.addWidget(self._gate_tree_view)
@@ -583,6 +586,16 @@ class MainWindow(QMainWindow):
         deselect_all_btn.setIcon(get_icon("x-swoop"))
         deselect_all_btn.clicked.connect(self._on_deselect_all_gates)
         btn_layout.addWidget(deselect_all_btn)
+
+        btn_layout.addStretch()
+
+        # Name toggle button (Full Names / Short Names)
+        self._gate_name_toggle_btn = QPushButton("Full Names")
+        self._gate_name_toggle_btn.setCheckable(True)
+        self._gate_name_toggle_btn.setChecked(True)
+        self._gate_name_toggle_btn.setToolTip("Toggle between full names (with parent prefix for duplicates) and short names")
+        self._gate_name_toggle_btn.clicked.connect(self._on_name_toggle_changed)
+        btn_layout.addWidget(self._gate_name_toggle_btn)
 
         layout.addLayout(btn_layout)
 
@@ -749,6 +762,10 @@ class MainWindow(QMainWindow):
         self._gate_marker_matrix_view = GateMarkerMatrixView()
         self._gate_marker_matrix_view.set_model(self._gate_marker_matrix_model)
         layout.addWidget(self._gate_marker_matrix_view, 1)  # Stretch factor 1 to expand
+
+        # Connect MFI matrix's name toggle to shared handler
+        self._gate_marker_matrix_view._disambiguate_btn.clicked.disconnect()
+        self._gate_marker_matrix_view._disambiguate_btn.clicked.connect(self._on_mfi_name_toggle_changed)
 
         # MFI metrics selection - fixed at bottom
         mfi_group = QGroupBox("Statistics to Calculate (select at least one)")
@@ -1059,8 +1076,14 @@ class MainWindow(QMainWindow):
         self._sample_selection_tree.expandAll()
         self._update_sample_selection_header()
 
+        # Connect sample selection changes to gate availability filtering
+        self._sample_selection_model.selectionChanged.connect(self._on_sample_selection_for_gates)
+
         # Populate UI
         self._populate_gate_tree()
+
+        # Initialize available gates (all gates available when all samples selected)
+        self._available_gate_ids = {g.gate_id for g in self._workspace_model.gates}
         self._populate_sample_combo()
         self._populate_marker_checkboxes()
         self._populate_index_columns_list()
@@ -1213,25 +1236,116 @@ class MainWindow(QMainWindow):
     def _on_select_all_gates(self):
         """Select all gates."""
         self._gate_tree_model.select_all()
+        self._update_mfi_matrix_filter()
 
     def _on_deselect_all_gates(self):
         """Deselect all gates."""
         self._gate_tree_model.deselect_all()
+        self._update_mfi_matrix_filter()
+
+    def _on_name_toggle_changed(self, checked: bool) -> None:
+        """Handle name toggle change from gate tree panel - sync to MFI matrix."""
+        self._use_full_gate_names = checked
+
+        # Update button text
+        btn_text = "Full Names" if checked else "Short Names"
+        self._gate_name_toggle_btn.setText(btn_text)
+
+        # Update gate tree model display names
+        self._gate_tree_model.set_display_mode(use_full_names=checked)
+
+        # Update MFI matrix model (sync toggle button state)
+        if hasattr(self, '_gate_marker_matrix_view'):
+            self._gate_marker_matrix_view._disambiguate_btn.setChecked(checked)
+            self._gate_marker_matrix_model.set_disambiguate_enabled(checked)
+
+    def _on_mfi_name_toggle_changed(self, checked: bool) -> None:
+        """Handle name toggle change from MFI matrix panel - sync to gate tree."""
+        self._use_full_gate_names = checked
+
+        # Sync gate tree toggle button
+        self._gate_name_toggle_btn.setChecked(checked)
+        btn_text = "Full Names" if checked else "Short Names"
+        self._gate_name_toggle_btn.setText(btn_text)
+
+        # Update both models
+        self._gate_tree_model.set_display_mode(use_full_names=checked)
+        self._gate_marker_matrix_model.set_disambiguate_enabled(checked)
 
     def _on_gate_item_changed(self, item):
         """Handle changes to gate tree items, including reference checkboxes.
 
         This slot is connected to the model's itemChanged signal to sync
-        the reference gates set when users click the reference checkbox column.
+        the reference gates set when users click the reference checkbox column,
+        and to update MFI matrix filtering when gate selection changes.
         """
         from PyQt5.QtCore import Qt
-        # Check if this is a reference column item (column 1)
-        # Reference items store the gate_id in Qt.UserRole
+
         if item.column() == self._gate_tree_model.COLUMN_REFERENCE:
+            # Handle reference column changes
             gate_id = item.data(Qt.UserRole)
             if gate_id:
                 is_reference = item.checkState() == Qt.Checked
                 self._gate_tree_model.set_reference_gate(gate_id, is_reference)
+
+        elif item.column() == self._gate_tree_model.COLUMN_GATE:
+            # Handle gate selection changes - update MFI matrix filter
+            self._update_mfi_matrix_filter()
+
+    def _update_mfi_matrix_filter(self) -> None:
+        """Update the MFI matrix to show only selected and available gates."""
+        if not hasattr(self, '_gate_marker_matrix_model'):
+            return
+
+        # Get selected gates from tree
+        selected_gate_ids = self._gate_tree_model.get_selected_gate_ids()
+
+        # Filter by available gates (if set)
+        if self._available_gate_ids:
+            visible_gate_ids = [
+                gid for gid in selected_gate_ids
+                if gid in self._available_gate_ids
+            ]
+        else:
+            visible_gate_ids = selected_gate_ids
+
+        # Apply filter to MFI matrix
+        self._gate_marker_matrix_model.set_gate_filter(visible_gate_ids)
+
+    def _on_sample_selection_for_gates(self, sample_id: str, is_selected: bool) -> None:
+        """Handle sample selection changes - update available gates with debouncing."""
+        from PyQt5.QtCore import QTimer
+
+        # Use debouncing to avoid excessive updates during rapid selection changes
+        if not hasattr(self, '_gate_filter_timer'):
+            self._gate_filter_timer = QTimer(self)
+            self._gate_filter_timer.setSingleShot(True)
+            self._gate_filter_timer.timeout.connect(self._update_available_gates)
+
+        # Reset timer - will fire 100ms after last selection change
+        self._gate_filter_timer.start(100)
+
+    def _update_available_gates(self) -> None:
+        """Recalculate which gates are available for selected samples."""
+        selected_sample_ids = self._sample_selection_model.get_selected_sample_ids()
+
+        if not selected_sample_ids:
+            # No samples selected - show all gates
+            self._available_gate_ids = {g.gate_id for g in self._workspace_model.gates}
+        else:
+            # Find gates that exist in ANY selected sample
+            all_gate_ids = [g.gate_id for g in self._workspace_model.gates]
+            gates_without_data = self._workspace_model.get_gates_without_data_in_samples(
+                gate_ids=all_gate_ids,
+                sample_ids=selected_sample_ids
+            )
+            self._available_gate_ids = set(all_gate_ids) - set(gates_without_data)
+
+        # Update gate tree availability display
+        self._gate_tree_model.set_available_gates(self._available_gate_ids)
+
+        # Update MFI matrix filter
+        self._update_mfi_matrix_filter()
 
     def _on_select_all_samples(self):
         """Select all samples."""

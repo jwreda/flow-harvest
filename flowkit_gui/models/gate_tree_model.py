@@ -82,6 +82,9 @@ class GateTreeModel(QStandardItemModel):
         self.setHorizontalHeaderLabels(["Gate", "Ref", "Events", "% Parent"])
         self._gates: Dict[str, Gate] = {}  # gate_id -> Gate mapping
         self._reference_gates: Set[str] = set()  # gate_ids marked as reference
+        self._use_full_names: bool = True  # Full (disambiguated) vs short names
+        self._display_names: Dict[str, str] = {}  # gate_id -> display name
+        self._available_gate_ids: Set[str] = set()  # Gates available for selected samples
 
     def clear_gates(self):
         """Clear all gates from the model."""
@@ -108,6 +111,7 @@ class GateTreeModel(QStandardItemModel):
             item.setCheckable(True)
             item.setCheckState(Qt.Checked if gate.is_selected else Qt.Unchecked)
             item.setData(gate.gate_id, Qt.UserRole)  # Store gate_id
+            item.setData(gate.depth, Qt.UserRole + 1)  # Store depth for colored dots
 
             # Reference checkbox column (for normalization)
             ref_item = QStandardItem()
@@ -367,3 +371,149 @@ class GateTreeModel(QStandardItemModel):
             item = self.item(i, self.COLUMN_GATE)
             if item:
                 traverse(item)
+
+    # --- Display Mode Methods ---
+
+    def set_display_mode(self, use_full_names: bool) -> None:
+        """Set whether to show full (disambiguated) or short gate names.
+
+        Args:
+            use_full_names: True for full names with parent prefix, False for short names
+        """
+        if self._use_full_names == use_full_names:
+            return
+
+        self._use_full_names = use_full_names
+        self._compute_display_names()
+        self._refresh_display_names()
+
+    def _compute_display_names(self) -> None:
+        """Compute display names for all gates based on current mode.
+
+        For full names mode: Add minimal parent prefix to disambiguate duplicate names.
+        For short names mode: Use just the gate name.
+        """
+        self._display_names.clear()
+
+        if not self._use_full_names:
+            # Short names mode - just use base name
+            for gate_id, gate in self._gates.items():
+                self._display_names[gate_id] = gate.name
+            return
+
+        # Full names mode - disambiguate duplicates with parent prefix
+        # First, find all duplicate names
+        name_count: Dict[str, List[str]] = {}  # name -> list of gate_ids
+        for gate_id, gate in self._gates.items():
+            if gate.name not in name_count:
+                name_count[gate.name] = []
+            name_count[gate.name].append(gate_id)
+
+        # For each gate, compute display name
+        for gate_id, gate in self._gates.items():
+            if len(name_count[gate.name]) == 1:
+                # Unique name - use as is
+                self._display_names[gate_id] = gate.name
+            else:
+                # Duplicate name - add minimal parent prefix to disambiguate
+                self._display_names[gate_id] = self._disambiguate_gate_name(
+                    gate_id, name_count[gate.name]
+                )
+
+    def _disambiguate_gate_name(self, gate_id: str, duplicate_gate_ids: List[str]) -> str:
+        """Add minimal parent prefix to disambiguate a gate name.
+
+        Args:
+            gate_id: The gate to get display name for
+            duplicate_gate_ids: List of gate_ids with the same base name
+
+        Returns:
+            Disambiguated name like 'CD3+/CD4+' if multiple gates named 'CD4+'
+        """
+        gate = self._gates[gate_id]
+
+        # Try progressively longer prefixes until unique
+        path = list(gate.path)
+        base_name = path[-1] if path else gate.name
+
+        for prefix_len in range(1, len(path)):
+            # Build candidate name with prefix
+            prefix_start = len(path) - 1 - prefix_len
+            prefix_parts = path[prefix_start:-1]
+            candidate = "/".join(prefix_parts) + "/" + base_name
+
+            # Check if this is unique among duplicates
+            is_unique = True
+            for other_id in duplicate_gate_ids:
+                if other_id == gate_id:
+                    continue
+                other_gate = self._gates[other_id]
+                other_path = list(other_gate.path)
+                other_prefix_start = len(other_path) - 1 - prefix_len
+                if other_prefix_start >= 0:
+                    other_prefix = other_path[other_prefix_start:-1]
+                    other_candidate = "/".join(other_prefix) + "/" + base_name
+                    if candidate == other_candidate:
+                        is_unique = False
+                        break
+
+            if is_unique:
+                return candidate
+
+        # If still not unique, use full path
+        return "/".join(path)
+
+    def _refresh_display_names(self) -> None:
+        """Update all gate items with their computed display names."""
+        def traverse(item: QStandardItem):
+            gate_id = item.data(Qt.UserRole)
+            if gate_id and gate_id in self._display_names:
+                item.setText(self._display_names[gate_id])
+
+            for i in range(item.rowCount()):
+                child = item.child(i, self.COLUMN_GATE)
+                if child:
+                    traverse(child)
+
+        for i in range(self.rowCount()):
+            item = self.item(i, self.COLUMN_GATE)
+            if item:
+                traverse(item)
+
+    # --- Gate Availability Methods ---
+
+    def set_available_gates(self, available_gate_ids: Set[str]) -> None:
+        """Set which gates are available (have data in selected samples).
+
+        Unavailable gates are grayed out and their checkboxes are disabled.
+
+        Args:
+            available_gate_ids: Set of gate_ids that have data
+        """
+        self._available_gate_ids = available_gate_ids
+        self._update_gate_availability_display()
+
+    def _update_gate_availability_display(self) -> None:
+        """Update visual state of gates based on availability."""
+        def traverse(item: QStandardItem):
+            gate_id = item.data(Qt.UserRole)
+            if gate_id and gate_id in self._gates:
+                is_available = not self._available_gate_ids or gate_id in self._available_gate_ids
+                item.setEnabled(is_available)
+                if not is_available:
+                    # Uncheck unavailable gates
+                    item.setCheckState(Qt.Unchecked)
+
+            for i in range(item.rowCount()):
+                child = item.child(i, self.COLUMN_GATE)
+                if child:
+                    traverse(child)
+
+        for i in range(self.rowCount()):
+            item = self.item(i, self.COLUMN_GATE)
+            if item:
+                traverse(item)
+
+    def get_available_gate_ids(self) -> Set[str]:
+        """Get the set of currently available gate IDs."""
+        return self._available_gate_ids

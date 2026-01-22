@@ -9,11 +9,11 @@ This module provides a matrix widget for selecting gate/marker combinations:
 """
 
 from typing import Optional
-from PyQt5.QtCore import Qt, QSize, QRect, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QRect, pyqtSignal, QEvent, QPoint
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QPushButton, QLabel, QAbstractItemView, QStyle, QStyleOptionButton,
-    QStyledItemDelegate, QScrollBar, QFrame, QSizePolicy
+    QStyledItemDelegate, QScrollBar, QFrame, QSizePolicy, QToolTip
 )
 from PyQt5.QtGui import QPainter, QFont, QColor, QBrush, QPen, QWheelEvent, QKeyEvent, QMouseEvent
 
@@ -48,6 +48,7 @@ class RotatedHeaderView(QHeaderView):
         self._base_dot_size = 8
         self._base_dot_margin = 4
         self._base_font_size = 9
+        self.setMouseTracking(True)  # Enable mouse tracking for tooltips
 
     def set_zoom_level(self, zoom: float) -> None:
         """Set the zoom level for scaling text and dot sizes."""
@@ -112,6 +113,25 @@ class RotatedHeaderView(QHeaderView):
                 painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, str(text))
 
         painter.restore()
+
+    def event(self, event: QEvent) -> bool:
+        """Handle tooltip events to show marker name on hover."""
+        if event.type() == QEvent.ToolTip:
+            pos = event.pos()
+            section = self.logicalIndexAt(pos)
+
+            if section >= 0:
+                model = self.model()
+                if model:
+                    tooltip = model.headerData(section, self.orientation(), Qt.ToolTipRole)
+                    if tooltip:
+                        QToolTip.showText(event.globalPos(), str(tooltip), self)
+                        return True
+
+            QToolTip.hideText()
+            return True
+
+        return super().event(event)
 
 
 class ColoredDepthHeaderView(QHeaderView):
@@ -270,6 +290,27 @@ class ColoredDepthHeaderView(QHeaderView):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+    def event(self, event: QEvent) -> bool:
+        """Handle tooltip events to show gate name on hover."""
+        if event.type() == QEvent.ToolTip:
+            # Get the section (row) at the mouse position
+            pos = event.pos()
+            section = self.logicalIndexAt(pos)
+
+            if section >= 0:
+                model = self.model()
+                if model:
+                    # Get tooltip from model
+                    tooltip = model.headerData(section, self.orientation(), Qt.ToolTipRole)
+                    if tooltip:
+                        QToolTip.showText(event.globalPos(), str(tooltip), self)
+                        return True
+
+            QToolTip.hideText()
+            return True
+
+        return super().event(event)
 
 
 class CheckboxDelegate(QStyledItemDelegate):

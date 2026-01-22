@@ -81,7 +81,11 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         super().__init__(parent)
 
         # Gate info: list of (gate_id, gate_name, depth)
-        self._gates: List[Tuple[str, str, int]] = []
+        self._all_gates: List[Tuple[str, str, int]] = []  # All gates from workspace
+        self._gates: List[Tuple[str, str, int]] = []  # Filtered gates (currently visible)
+
+        # Gate filter: set of visible gate_ids (None = show all)
+        self._gate_filter: Optional[Set[str]] = None
 
         # Marker info: list of (channel, display_name)
         self._markers: List[Tuple[str, str]] = []
@@ -159,7 +163,9 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         """
         self.beginResetModel()
 
-        self._gates = [(g.gate_id, g.name, g.depth) for g in gates]
+        self._all_gates = [(g.gate_id, g.name, g.depth) for g in gates]
+        self._gate_filter = None  # Reset filter - show all gates initially
+        self._gates = self._all_gates.copy()  # Start with all gates visible
         self._markers = [(m.pnn_label, m.display_name) for m in markers]
         self._selections.clear()
         self._compute_display_names()
@@ -167,6 +173,36 @@ class GateMarkerMatrixModel(QAbstractTableModel):
         self.endResetModel()
 
         logger.info(f"Matrix initialized: {len(self._gates)} gates × {len(self._markers)} markers")
+
+    def set_gate_filter(self, visible_gate_ids: Optional[List[str]]) -> None:
+        """Filter matrix to show only specified gates.
+
+        Args:
+            visible_gate_ids: List of gate_ids to show, or None to show all gates.
+        """
+        self.beginResetModel()
+
+        if visible_gate_ids is None:
+            # Show all gates
+            self._gate_filter = None
+            self._gates = self._all_gates.copy()
+        else:
+            # Filter to only visible gates
+            self._gate_filter = set(visible_gate_ids)
+            self._gates = [
+                (gate_id, name, depth)
+                for gate_id, name, depth in self._all_gates
+                if gate_id in self._gate_filter
+            ]
+
+        self._compute_display_names()
+        self.endResetModel()
+
+        logger.debug(f"Gate filter applied: {len(self._gates)} of {len(self._all_gates)} gates visible")
+
+    def clear_gate_filter(self) -> None:
+        """Remove gate filter, show all gates."""
+        self.set_gate_filter(None)
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         """Return number of rows (gates)."""
