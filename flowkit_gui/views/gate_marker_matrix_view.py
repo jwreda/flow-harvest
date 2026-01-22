@@ -8,12 +8,12 @@ This module provides a matrix widget for selecting gate/marker combinations:
 - Row/column click to select entire row/column
 """
 
-from typing import Optional
-from PyQt5.QtCore import Qt, QSize, QRect, pyqtSignal, QEvent, QPoint
+from typing import Optional, Set, Tuple
+from PyQt5.QtCore import Qt, QSize, QRect, pyqtSignal, QEvent, QPoint, QModelIndex
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QPushButton, QLabel, QAbstractItemView, QStyle, QStyleOptionButton,
-    QStyledItemDelegate, QScrollBar, QFrame, QSizePolicy, QToolTip
+    QStyledItemDelegate, QScrollBar, QFrame, QSizePolicy, QToolTip, QMenu, QAction
 )
 from PyQt5.QtGui import QPainter, QFont, QColor, QBrush, QPen, QWheelEvent, QKeyEvent, QMouseEvent
 
@@ -382,13 +382,204 @@ class CheckboxDelegate(QStyledItemDelegate):
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        """Handle mouse clicks to toggle checkbox."""
-        if event.type() == event.MouseButtonRelease:
-            current_state = index.data(Qt.CheckStateRole)
-            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
-            model.setData(index, new_state, Qt.CheckStateRole)
-            return True
+        """
+        Handle mouse clicks to toggle checkbox.
+
+        Note: Mouse events are now handled by DragSelectableTableView for
+        drag support. This method returns False to let the table view handle
+        all mouse events.
+        """
+        # Let the custom table view handle all mouse events for drag support
         return False
+
+
+class DragSelectableTableView(QTableView):
+    """
+    Custom QTableView that supports drag-to-toggle and Shift+drag rectangle selection.
+
+    Features:
+    - Click and drag to toggle multiple checkboxes
+    - First cell clicked determines action (check or uncheck)
+    - Shift+drag to draw rectangle selection with context menu
+    """
+
+    # Signal emitted when rectangle selection completes, passes (start_index, end_index)
+    rectangleSelected = pyqtSignal(QModelIndex, QModelIndex)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Drag state
+        self._is_dragging = False
+        self._drag_paint_checked = True  # True = paint checks, False = paint unchecks
+        self._dragged_cells: Set[Tuple[int, int]] = set()
+        self._drag_start_index: Optional[QModelIndex] = None
+
+        # Rectangle selection state
+        self._is_rect_selecting = False
+        self._rect_start_index: Optional[QModelIndex] = None
+        self._rect_current_index: Optional[QModelIndex] = None
+
+        # Enable mouse tracking for drag operations
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press to start drag or rectangle selection."""
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        index = self.indexAt(event.pos())
+        if not index.isValid():
+            super().mousePressEvent(event)
+            return
+
+        # Check for Shift modifier -> rectangle selection mode
+        if event.modifiers() & Qt.ShiftModifier:
+            self._is_rect_selecting = True
+            self._rect_start_index = index
+            self._rect_current_index = index
+            event.accept()
+            self.viewport().update()
+            return
+
+        # Normal drag mode - determine paint action from first cell state
+        model = self.model()
+        if model:
+            current_state = index.data(Qt.CheckStateRole)
+            # If unchecked, we paint checks; if checked, we paint unchecks
+            self._drag_paint_checked = (current_state != Qt.Checked)
+
+            # Apply immediately to first cell
+            new_state = Qt.Checked if self._drag_paint_checked else Qt.Unchecked
+            model.setData(index, new_state, Qt.CheckStateRole)
+
+            self._is_dragging = True
+            self._drag_start_index = index
+            self._dragged_cells = {(index.row(), index.column())}
+
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse move during drag operations."""
+        if self._is_rect_selecting:
+            # Update rectangle end point
+            index = self.indexAt(event.pos())
+            if index.isValid() and index != self._rect_current_index:
+                self._rect_current_index = index
+                self.viewport().update()
+            event.accept()
+            return
+
+        if self._is_dragging:
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                cell_key = (index.row(), index.column())
+                if cell_key not in self._dragged_cells:
+                    # Apply paint action to this new cell
+                    model = self.model()
+                    if model:
+                        new_state = Qt.Checked if self._drag_paint_checked else Qt.Unchecked
+                        model.setData(index, new_state, Qt.CheckStateRole)
+                        self._dragged_cells.add(cell_key)
+            event.accept()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse release to finalize drag or show rectangle menu."""
+        if event.button() != Qt.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+
+        if self._is_rect_selecting:
+            # Finalize rectangle selection - emit signal for context menu
+            if self._rect_start_index and self._rect_current_index:
+                self.rectangleSelected.emit(self._rect_start_index, self._rect_current_index)
+            self._is_rect_selecting = False
+            self._rect_start_index = None
+            self._rect_current_index = None
+            self.viewport().update()
+            event.accept()
+            return
+
+        if self._is_dragging:
+            self._is_dragging = False
+            self._drag_start_index = None
+            self._dragged_cells.clear()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        """Override to draw rectangle selection overlay."""
+        super().paintEvent(event)
+
+        if self._is_rect_selecting and self._rect_start_index and self._rect_current_index:
+            self._paint_selection_rectangle()
+
+    def _paint_selection_rectangle(self) -> None:
+        """Draw semi-transparent rectangle overlay during Shift+drag."""
+        if not self._rect_start_index or not self._rect_current_index:
+            return
+
+        # Get visual rectangles for start and end cells
+        start_rect = self.visualRect(self._rect_start_index)
+        end_rect = self.visualRect(self._rect_current_index)
+
+        # Calculate bounding rectangle
+        min_x = min(start_rect.left(), end_rect.left())
+        max_x = max(start_rect.right(), end_rect.right())
+        min_y = min(start_rect.top(), end_rect.top())
+        max_y = max(start_rect.bottom(), end_rect.bottom())
+
+        selection_rect = QRect(min_x, min_y, max_x - min_x, max_y - min_y)
+
+        # Paint overlay
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Semi-transparent pink fill (matches theme)
+        fill_color = QColor("#FF69B4")
+        fill_color.setAlpha(40)
+        painter.fillRect(selection_rect, fill_color)
+
+        # Dashed pink border
+        pen = QPen(QColor("#FF69B4"), 2, Qt.DashLine)
+        painter.setPen(pen)
+        painter.drawRect(selection_rect)
+
+        painter.end()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle Escape to cancel drag or rectangle selection."""
+        if event.key() == Qt.Key_Escape:
+            if self._is_rect_selecting:
+                self._is_rect_selecting = False
+                self._rect_start_index = None
+                self._rect_current_index = None
+                self.viewport().update()
+                event.accept()
+                return
+            if self._is_dragging:
+                self._is_dragging = False
+                self._drag_start_index = None
+                self._dragged_cells.clear()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        """Reset drag state when mouse leaves widget."""
+        if self._is_dragging:
+            self._is_dragging = False
+            self._drag_start_index = None
+            self._dragged_cells.clear()
+        # Note: Keep rect selection active as user might return
+        super().leaveEvent(event)
 
 
 class GateMarkerMatrixView(QWidget):
@@ -431,8 +622,8 @@ class GateMarkerMatrixView(QWidget):
         self._info_label.setObjectName("matrixInfoLabel")
         layout.addWidget(self._info_label)
 
-        # Table view
-        self._table_view = QTableView()
+        # Table view - use custom class for drag selection support
+        self._table_view = DragSelectableTableView()
         self._table_view.setSelectionMode(QAbstractItemView.NoSelection)
         self._table_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
@@ -474,6 +665,12 @@ class GateMarkerMatrixView(QWidget):
         self._summary_label = QLabel("No selections")
         self._summary_label.setObjectName("matrixSummaryLabel")
         layout.addWidget(self._summary_label)
+
+        # Drag selection hint label
+        self._hint_label = QLabel("Drag to toggle \u2022 Shift+drag for rectangle select")
+        self._hint_label.setObjectName("matrixHintLabel")
+        self._hint_label.setStyleSheet("color: #888888; font-size: 9pt;")
+        layout.addWidget(self._hint_label)
 
     def _create_toolbar(self) -> QWidget:
         """Create the toolbar with selection and zoom controls."""
@@ -547,6 +744,9 @@ class GateMarkerMatrixView(QWidget):
         model.selectionChanged.connect(self._update_summary)
         model.modelReset.connect(self._update_info_label)
         model.modelReset.connect(self._auto_size_gate_header)
+
+        # Connect rectangle selection signal from custom table view
+        self._table_view.rectangleSelected.connect(self._on_rectangle_selected)
 
         # Update zoom
         self._apply_zoom()
@@ -628,6 +828,56 @@ class GateMarkerMatrixView(QWidget):
         """Handle click on column header - toggle entire column."""
         if self._model:
             self._model.toggle_column(col)
+
+    def _on_rectangle_selected(self, start_index: QModelIndex, end_index: QModelIndex) -> None:
+        """Handle rectangle selection completion - show context menu."""
+        if not self._model or not start_index.isValid() or not end_index.isValid():
+            return
+
+        # Create context menu
+        menu = QMenu(self)
+
+        check_action = QAction("Check All", self)
+        check_action.triggered.connect(
+            lambda: self._apply_rectangle_action(start_index, end_index, 'check')
+        )
+        menu.addAction(check_action)
+
+        uncheck_action = QAction("Uncheck All", self)
+        uncheck_action.triggered.connect(
+            lambda: self._apply_rectangle_action(start_index, end_index, 'uncheck')
+        )
+        menu.addAction(uncheck_action)
+
+        toggle_action = QAction("Toggle All", self)
+        toggle_action.triggered.connect(
+            lambda: self._apply_rectangle_action(start_index, end_index, 'toggle')
+        )
+        menu.addAction(toggle_action)
+
+        menu.addSeparator()
+
+        cancel_action = QAction("Cancel", self)
+        menu.addAction(cancel_action)
+
+        # Show menu at cursor position
+        menu.exec_(self.cursor().pos())
+
+    def _apply_rectangle_action(
+        self,
+        start_index: QModelIndex,
+        end_index: QModelIndex,
+        action: str
+    ) -> None:
+        """Apply action to rectangle region via model."""
+        if self._model:
+            self._model.apply_to_region(
+                start_index.row(),
+                start_index.column(),
+                end_index.row(),
+                end_index.column(),
+                action
+            )
 
     def _adjust_zoom(self, factor: float) -> None:
         """Adjust zoom level by factor."""

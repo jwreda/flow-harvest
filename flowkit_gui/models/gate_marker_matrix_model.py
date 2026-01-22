@@ -479,3 +479,61 @@ class GateMarkerMatrixModel(QAbstractTableModel):
             start_idx = self.index(0, col)
             end_idx = self.index(len(self._gates) - 1, col)
             self.dataChanged.emit(start_idx, end_idx, [Qt.CheckStateRole])
+
+    def apply_to_region(
+        self,
+        start_row: int,
+        start_col: int,
+        end_row: int,
+        end_col: int,
+        action: str
+    ) -> None:
+        """
+        Apply an action to all cells in a rectangular region.
+
+        Args:
+            start_row: Starting row index (inclusive)
+            start_col: Starting column index (inclusive)
+            end_row: Ending row index (inclusive)
+            end_col: Ending column index (inclusive)
+            action: One of 'check', 'uncheck', or 'toggle'
+        """
+        # Normalize coordinates (handle drag in any direction)
+        min_row = min(start_row, end_row)
+        max_row = max(start_row, end_row)
+        min_col = min(start_col, end_col)
+        max_col = max(start_col, end_col)
+
+        # Validate bounds
+        min_row = max(0, min_row)
+        max_row = min(len(self._gates) - 1, max_row)
+        min_col = max(0, min_col)
+        max_col = min(len(self._markers) - 1, max_col)
+
+        if min_row > max_row or min_col > max_col:
+            return
+
+        # Apply action to each cell in region
+        for row in range(min_row, max_row + 1):
+            gate_id, _, _ = self._gates[row]
+            for col in range(min_col, max_col + 1):
+                channel, _ = self._markers[col]
+                key = (gate_id, channel)
+
+                if action == 'check':
+                    self._selections.add(key)
+                elif action == 'uncheck':
+                    self._selections.discard(key)
+                elif action == 'toggle':
+                    if key in self._selections:
+                        self._selections.discard(key)
+                    else:
+                        self._selections.add(key)
+
+        # Emit data changed for the entire region
+        top_left = self.index(min_row, min_col)
+        bottom_right = self.index(max_row, max_col)
+        self.dataChanged.emit(top_left, bottom_right, [Qt.CheckStateRole])
+        self.selectionChanged.emit()
+
+        logger.debug(f"Applied '{action}' to region ({min_row},{min_col}) to ({max_row},{max_col})")
