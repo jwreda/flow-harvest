@@ -42,6 +42,7 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option, index):
         """Paint the item with colored depth dots and accent styling."""
         painter.save()
+        painter.setClipRect(option.rect)  # Clip all drawing to cell boundaries
 
         # Only apply custom rendering to the gate name column (column 0)
         if index.column() != 0:

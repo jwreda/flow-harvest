@@ -13,8 +13,10 @@ See [docs/unmixing-vs-compensation.md](docs/unmixing-vs-compensation.md) for ful
 - [x] Show compensation matrix colors in sample list (colored dots) (2026-01-22)
 - [x] Update compensation info banner (blue informational vs yellow warning) (2026-01-22)
 
-### In Progress
-- [ ] Add collapsible compensation details panel with matrix legend
+### Completed (Compensation Phase 1)
+- [x] Add collapsible compensation details panel with matrix legend (2026-01-22)
+
+### Planned (Compensation Phase 2)
 
 ### Planned
 - [ ] Handle edge cases (multiple matrices, missing assignments)

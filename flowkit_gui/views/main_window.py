@@ -24,9 +24,9 @@ from PyQt5.QtWidgets import (
     QTextEdit, QApplication
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor
 
-from ..models.workspace_model import WorkspaceModel, DataSource
+from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo
 from ..models.gate_tree_model import GateTreeModel, Gate
 from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric
@@ -703,6 +703,52 @@ class MainWindow(QMainWindow):
         self._comp_warning_banner.setVisible(False)
         sample_selection_layout.addWidget(self._comp_warning_banner)
 
+        # Collapsible compensation details panel
+        self._comp_details_widget = QWidget()
+        comp_details_layout = QVBoxLayout(self._comp_details_widget)
+        comp_details_layout.setContentsMargins(0, 4, 0, 0)
+        comp_details_layout.setSpacing(4)
+
+        # Header with toggle button
+        comp_header_layout = QHBoxLayout()
+        comp_header_layout.setContentsMargins(0, 0, 0, 0)
+        self._comp_details_toggle = QPushButton("▶ Compensation Details")
+        self._comp_details_toggle.setStyleSheet(
+            "QPushButton { text-align: left; border: none; padding: 4px; "
+            "font-weight: bold; color: #666; } "
+            "QPushButton:hover { color: #333; background-color: #f0f0f0; }"
+        )
+        self._comp_details_toggle.setCheckable(True)
+        self._comp_details_toggle.clicked.connect(self._toggle_comp_details)
+        comp_header_layout.addWidget(self._comp_details_toggle)
+        comp_header_layout.addStretch()
+        comp_details_layout.addLayout(comp_header_layout)
+
+        # Content area (hidden by default)
+        self._comp_details_content = QWidget()
+        content_layout = QVBoxLayout(self._comp_details_content)
+        content_layout.setContentsMargins(8, 4, 8, 8)
+        content_layout.setSpacing(4)
+
+        # Matrix legend label
+        self._comp_matrix_legend = QLabel("No compensation matrices loaded")
+        self._comp_matrix_legend.setWordWrap(True)
+        self._comp_matrix_legend.setStyleSheet("font-size: 11px;")
+        content_layout.addWidget(self._comp_matrix_legend)
+
+        # Expandable matrix details (for viewing spillover values)
+        self._comp_matrix_details_btn = QPushButton("Show Matrix Values...")
+        self._comp_matrix_details_btn.setStyleSheet("font-size: 11px;")
+        self._comp_matrix_details_btn.clicked.connect(self._show_compensation_matrix_dialog)
+        self._comp_matrix_details_btn.setVisible(False)
+        content_layout.addWidget(self._comp_matrix_details_btn)
+
+        self._comp_details_content.setVisible(False)
+        comp_details_layout.addWidget(self._comp_details_content)
+
+        self._comp_details_widget.setVisible(False)  # Hidden until workspace loaded
+        sample_selection_layout.addWidget(self._comp_details_widget)
+
         splitter.addWidget(sample_selection_widget)
 
         # Right side: Sample preview and keywords
@@ -1101,6 +1147,7 @@ class MainWindow(QMainWindow):
         )
         self._sample_selection_tree.expandAll()
         self._update_sample_selection_header()
+        self._update_comp_details_panel()
 
         # Connect sample selection changes to gate availability filtering
         self._sample_selection_model.selectionChanged.connect(self._on_sample_selection_for_gates)
@@ -1439,6 +1486,127 @@ class MainWindow(QMainWindow):
             self._comp_warning_banner.setVisible(True)
         else:
             self._comp_warning_banner.setVisible(False)
+
+    def _toggle_comp_details(self):
+        """Toggle the compensation details panel expansion."""
+        is_expanded = self._comp_details_toggle.isChecked()
+        self._comp_details_content.setVisible(is_expanded)
+        self._comp_details_toggle.setText(
+            "▼ Compensation Details" if is_expanded else "▶ Compensation Details"
+        )
+
+    def _update_comp_details_panel(self):
+        """Update the compensation details panel with matrix information."""
+        if not self._workspace_model.is_loaded:
+            self._comp_details_widget.setVisible(False)
+            return
+
+        # Get compensation info from workspace
+        comp_info = self._workspace_model.get_workspace_compensation_info()
+        global_matrices = comp_info.get('global_matrices', [])
+        summary = comp_info.get('summary', {})
+
+        if not global_matrices:
+            self._comp_matrix_legend.setText("No compensation matrices in workspace")
+            self._comp_matrix_details_btn.setVisible(False)
+            self._comp_details_widget.setVisible(True)
+            return
+
+        # Build legend HTML with colored squares
+        legend_parts = []
+        matrix_usage = summary.get('matrix_usage', {})
+
+        for matrix in global_matrices:
+            color = matrix.color or "#808080"
+            name = matrix.name
+            count = matrix_usage.get(name, 0)
+            spectral_tag = " (spectral)" if matrix.spectral else ""
+
+            # Create colored square using HTML
+            legend_parts.append(
+                f'<span style="color: {color}; font-size: 14px;">●</span> '
+                f'<b>{name}</b>{spectral_tag}: {count} samples'
+            )
+
+        # Add count for samples without compensation
+        without_comp = summary.get('samples_without_compensation', 0)
+        if without_comp > 0:
+            legend_parts.append(
+                f'<span style="color: #808080; font-size: 14px;">○</span> '
+                f'<i>No compensation</i>: {without_comp} samples'
+            )
+
+        legend_html = "<br>".join(legend_parts)
+        self._comp_matrix_legend.setText(legend_html)
+
+        # Show matrix details button if we have matrices with detectors
+        has_detectors = any(m.detectors for m in global_matrices)
+        self._comp_matrix_details_btn.setVisible(has_detectors)
+
+        # Store matrices for dialog
+        self._cached_comp_matrices = global_matrices
+
+        self._comp_details_widget.setVisible(True)
+
+    def _show_compensation_matrix_dialog(self):
+        """Show a dialog with full compensation matrix details."""
+        if not hasattr(self, '_cached_comp_matrices') or not self._cached_comp_matrices:
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Compensation Matrix Details")
+        dialog.setMinimumSize(600, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Create tab widget for multiple matrices
+        tabs = QTabWidget()
+
+        for matrix in self._cached_comp_matrices:
+            # Create tab for this matrix
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+
+            # Matrix info header
+            info_label = QLabel()
+            spectral_text = "Spectral (OLS)" if matrix.spectral else "Conventional"
+            status_text = f" - {matrix.status}" if matrix.status else ""
+            info_label.setText(
+                f"<b>Name:</b> {matrix.name}<br>"
+                f"<b>Type:</b> {spectral_text}{status_text}<br>"
+                f"<b>Detectors:</b> {len(matrix.detectors)}"
+            )
+            tab_layout.addWidget(info_label)
+
+            # Detector list
+            if matrix.detectors:
+                detector_label = QLabel("<b>Detector Channels:</b>")
+                tab_layout.addWidget(detector_label)
+
+                detector_list = QTextEdit()
+                detector_list.setReadOnly(True)
+                detector_list.setMaximumHeight(150)
+                detector_list.setText("\n".join(matrix.detectors))
+                tab_layout.addWidget(detector_list)
+
+            tab_layout.addStretch()
+
+            # Tab name with color indicator
+            tab_name = f"● {matrix.name}"
+            tabs.addTab(tab, tab_name)
+
+            # Try to set tab color (this is tricky in PyQt5)
+            tab_index = tabs.count() - 1
+            tabs.tabBar().setTabTextColor(tab_index, QColor(matrix.color or "#808080"))
+
+        layout.addWidget(tabs)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
 
     def _on_select_all_markers(self):
         """Select all markers."""
