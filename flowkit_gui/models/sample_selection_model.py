@@ -478,7 +478,8 @@ class SampleSelectionModel(QStandardItemModel):
         self,
         groups: Dict[str, List[str]],
         samples: List[Sample],
-        default_selected: bool = True
+        default_selected: bool = True,
+        compensation_assignments: Optional[Dict[str, SampleCompensationAssignment]] = None
     ) -> None:
         """
         Populate the model from metadata (without full FCS data).
@@ -490,9 +491,15 @@ class SampleSelectionModel(QStandardItemModel):
             groups: Dict mapping group name to list of sample IDs
             samples: List of Sample objects (may have event_count=-1 for unknown)
             default_selected: Whether samples are selected by default
+            compensation_assignments: Optional dict of sample_id -> SampleCompensationAssignment
+                                     (includes matrix color from WSP metadata)
         """
         self.clear_samples()
         self._updating = True
+
+        # Store compensation assignments for status display
+        if compensation_assignments:
+            self._compensation_assignments = compensation_assignments
 
         # Store sample info
         for sample in samples:

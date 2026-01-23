@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor
 
-from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample
+from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample, SampleCompensationAssignment
 from ..models.gate_tree_model import GateTreeModel, Gate
 from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric
@@ -370,6 +370,24 @@ class LoadingDialog(QDialog):
         """Update the status message."""
         self._status_label.setText(message)
 
+    def set_determinate(self, total: int):
+        """Switch to determinate mode with known total."""
+        self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setTextVisible(True)
+
+    def set_indeterminate(self):
+        """Switch to indeterminate mode (spinning)."""
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setTextVisible(False)
+
+    def set_progress(self, current: int, total: int):
+        """Update progress bar value (determinate mode)."""
+        if self._progress_bar.maximum() != total:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setTextVisible(True)
+        self._progress_bar.setValue(current)
+
 
 class MainWindow(QMainWindow):
     """Main application window for FlowJoe."""
@@ -551,6 +569,7 @@ class MainWindow(QMainWindow):
 
         # Tree view
         self._gate_tree_view = QTreeView()
+        self._gate_tree_view.setObjectName("gateTreeView")  # For CSS targeting
         self._gate_tree_view.setModel(self._gate_tree_model)
         self._gate_tree_view.setAlternatingRowColors(True)
         self._gate_tree_view.setAnimated(True)
@@ -1174,21 +1193,33 @@ class MainWindow(QMainWindow):
 
         # Show loading dialog
         loading_dialog = LoadingDialog(self)
-        loading_dialog.set_status(f"Loading {len(selected_sample_ids)} samples...")
+        loading_dialog.set_status(f"Loading {len(selected_sample_ids)} FCS files...")
+        loading_dialog.show()
+        QApplication.processEvents()
 
         try:
-            # Load FCS data for selected samples only
+            # Phase 1: Load FCS data (indeterminate - FlowKit bulk operation)
             num_samples, num_gates = self._workspace_model.load_selected_fcs(
                 selected_sample_ids=selected_sample_ids,
                 fcs_files=self._pending_fcs_files,
                 ignore_missing=True
             )
 
-            loading_dialog.set_status("Applying compensation...")
-            QApplication.processEvents()
+            # Phase 2: Apply compensation with progress tracking
+            loading_dialog.set_determinate(len(selected_sample_ids))
 
-            # Apply compensation to loaded samples
-            comp_results = self._workspace_model.apply_compensation_to_samples()
+            def update_progress(current, total):
+                loading_dialog.set_progress(current, total)
+                QApplication.processEvents()
+
+            def update_status(msg):
+                loading_dialog.set_status(msg)
+                QApplication.processEvents()
+
+            comp_results = self._workspace_model.apply_compensation_to_samples(
+                progress_callback=update_progress,
+                status_callback=update_status
+            )
 
             loading_dialog.accept()
 
@@ -1230,6 +1261,18 @@ class MainWindow(QMainWindow):
         # Update sample selection with actual event counts
         self._update_sample_selection_with_fcs_data()
 
+        # Update compensation status display with full data from loaded samples
+        comp_assignments = self._workspace_model.compensation_assignments
+        if comp_assignments:
+            self._sample_selection_model.update_compensation_status({}, comp_assignments)
+
+        # Repopulate gate tree with full statistics from FCS data
+        self._populate_gate_tree()
+        self._gate_tree_view.expandAll()
+
+        # Update Compensation Details panel
+        self._update_comp_details_panel()
+
         # Update gate statistics for first sample
         if self._sample_combo.count() > 0:
             self._on_sample_changed(0)
@@ -1268,11 +1311,25 @@ class MainWindow(QMainWindow):
             for meta in wsp_metadata.samples.values()
         ]
 
+        # Build compensation assignments from metadata for UI display
+        compensation_assignments = {}
+        # Create lookup for matrix colors from compensation matrices
+        matrix_colors = {m.name: m.color for m in wsp_metadata.compensation_matrices}
+
+        for sample_id, matrix_name in wsp_metadata.sample_compensation.items():
+            compensation_assignments[sample_id] = SampleCompensationAssignment(
+                matrix_name=matrix_name,
+                matrix_id=None,  # Not available in metadata-only mode
+                color=matrix_colors.get(matrix_name) if matrix_name else None,
+                spectral=False
+            )
+
         # Populate sample selection from metadata (shows "?" for unknown event counts)
         self._sample_selection_model.populate_from_metadata(
             groups=groups,
             samples=metadata_samples,
-            default_selected=True
+            default_selected=True,
+            compensation_assignments=compensation_assignments
         )
         self._sample_selection_tree.expandAll()
         self._update_sample_selection_header()

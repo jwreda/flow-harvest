@@ -277,7 +277,9 @@ class WorkspaceModel:
 
     def apply_compensation_to_samples(
         self,
-        sample_ids: Optional[List[str]] = None
+        sample_ids: Optional[List[str]] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> Dict[str, str]:
         """
         Apply compensation matrices to samples.
@@ -288,6 +290,8 @@ class WorkspaceModel:
 
         Args:
             sample_ids: Optional list of sample IDs to process (default: all samples)
+            progress_callback: Optional callback(current, total) for progress updates
+            status_callback: Optional callback(message) for status text updates
 
         Returns:
             Dict mapping sample_id to status:
@@ -302,14 +306,20 @@ class WorkspaceModel:
             return results
 
         target_sample_ids = sample_ids if sample_ids else [s.sample_id for s in self._samples]
+        total_samples = len(target_sample_ids)
 
-        logger.info(f"Applying compensation to {len(target_sample_ids)} samples...")
+        logger.info(f"Applying compensation to {total_samples} samples...")
 
         applied_count = 0
         none_count = 0
         error_count = 0
 
-        for sample_id in target_sample_ids:
+        for i, sample_id in enumerate(target_sample_ids):
+            # Report progress
+            if progress_callback:
+                progress_callback(i + 1, total_samples)
+            if status_callback:
+                status_callback(f"Applying compensation ({i + 1}/{total_samples})...")
             try:
                 # Try to get the compensation matrix for this sample
                 # FlowKit's get_comp_matrix returns the matrix assigned in the WSP

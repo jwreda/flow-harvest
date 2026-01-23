@@ -60,7 +60,8 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
         selection_color = colors["selection"]
         hover_color = colors["hover"]
 
-        # Draw background based on state
+        # ALWAYS draw background to prevent QSS/alternating colors from overwriting content
+        # This is critical for the depth dots to be visible
         if is_selected:
             painter.fillRect(option.rect, QColor(selection_color))
             # 3px accent bar on left
@@ -73,6 +74,14 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
             painter.fillRect(accent_rect, QColor(self.ACCENT_COLOR))
         elif is_hovered:
             painter.fillRect(option.rect, QColor(hover_color))
+        else:
+            # Draw normal background with alternating colors
+            alt_row_color = colors.get("alt_row", "#FFF5F8")
+            bg_color = colors.get("background", "#FFFFFF")
+            if index.row() % 2 == 0:
+                painter.fillRect(option.rect, QColor(bg_color))
+            else:
+                painter.fillRect(option.rect, QColor(alt_row_color))
 
         # Get depth from item data
         depth = index.data(self.DEPTH_ROLE)

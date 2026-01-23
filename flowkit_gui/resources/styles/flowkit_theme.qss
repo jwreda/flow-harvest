@@ -198,6 +198,19 @@ QTreeView::branch:has-children:open {
     border-image: none;
 }
 
+/* Gate tree view - let custom delegate handle all item painting */
+QTreeView#gateTreeView::item {
+    background: transparent;
+}
+
+QTreeView#gateTreeView::item:selected {
+    background: transparent;
+}
+
+QTreeView#gateTreeView::item:hover {
+    background: transparent;
+}
+
 /* ===== Table View ===== */
 QTableView {
     background-color: white;
