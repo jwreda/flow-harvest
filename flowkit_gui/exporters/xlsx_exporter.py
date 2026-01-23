@@ -9,6 +9,7 @@ This module provides:
 - Warnings sheet for calculation errors
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Callable, Dict, Any
 import pandas as pd
@@ -25,6 +26,50 @@ from ..utils.cancellation import CancellationToken, CancellationError
 from ..utils.timing import PipelineTimer
 
 logger = get_logger("xlsx_exporter")
+
+
+@dataclass
+class CompensationSummary:
+    """Compensation application details for export summary."""
+    mode: DataSource  # AUTO, RAW, or COMP
+    total_samples: int
+    matrices_used: Dict[str, int]  # {matrix_name: sample_count}
+    failed_samples: int
+    spectral_samples: int  # Count using spectral/OLS compensation
+
+
+@dataclass
+class StatisticsSummary:
+    """Statistics generation details for export summary."""
+    gates_exported: int
+    channels_analyzed: int  # Unique channels with MFI
+    mfi_metrics: List[str]  # e.g., ["Mean", "Median", "GeoMean"]
+    total_mfi_calculations: int  # gates x channels x metrics x samples
+    frequency_calculations: int  # gate count statistics
+
+
+@dataclass
+class ExportSummary:
+    """Complete export operation summary."""
+    # Success/failure status
+    success: bool
+    filepath: str
+
+    # Sample/gate counts
+    samples_processed: int
+    gates_exported: int
+    keywords_exported: int
+
+    # Detailed breakdowns
+    compensation: CompensationSummary
+    statistics: StatisticsSummary
+
+    # Sheets created
+    sheets_created: List[str]
+
+    # Issues
+    warnings: List[str]
+    errors: List[str]
 
 
 class XLSXExporter:
@@ -107,7 +152,7 @@ class XLSXExporter:
         progress_callback: Optional[Callable[[int, int], None]] = None,
         status_callback: Optional[Callable[[str], None]] = None,
         cancellation_token: Optional[CancellationToken] = None
-    ) -> None:
+    ) -> ExportSummary:
         """
         Export data to Excel workbook.
 
@@ -129,6 +174,30 @@ class XLSXExporter:
 
         logger.info(f"Starting export to {filepath}")
         logger.debug(f"Data source: {self._data_source.value}")
+
+        # Initialize sheets created tracking for export summary
+        sheets_created = []
+
+        # Determine which samples we're processing for summary
+        processing_sample_ids = (
+            self._selected_sample_ids if self._selected_sample_ids
+            else [s.sample_id for s in self._workspace.samples]
+        )
+
+        # Collect compensation summary for export report
+        comp_info = self._workspace.get_workspace_compensation_info()
+        comp_assignments = comp_info.get('assignments', {})
+        matrices_used: Dict[str, int] = {}  # {matrix_name: count}
+        spectral_count = 0
+
+        # Count matrix usage across selected samples
+        for sample_id in processing_sample_ids:
+            if sample_id in comp_assignments:
+                assignment = comp_assignments[sample_id]
+                matrix_name = assignment.matrix_name
+                matrices_used[matrix_name] = matrices_used.get(matrix_name, 0) + 1
+                if assignment.spectral:
+                    spectral_count += 1
 
         # Determine whether to include "_Selected" sheets
         # When no markers are selected, _Selected sheets are redundant with _All sheets
@@ -167,6 +236,7 @@ class XLSXExporter:
             ws_gates = wb.active
             ws_gates.title = "Gating_Strategy"
             self._write_gating_strategy(ws_gates)
+            sheets_created.append("Gating_Strategy")
         current_step += 1
         if progress_callback:
             progress_callback(current_step, total_steps)
@@ -177,6 +247,7 @@ class XLSXExporter:
         with timer.step("Write keywords sheet"):
             ws_keywords = wb.create_sheet("Keywords")
             self._write_keywords_tidy(ws_keywords)
+            sheets_created.append("Keywords")
         current_step += 1
         if progress_callback:
             progress_callback(current_step, total_steps)
@@ -187,6 +258,7 @@ class XLSXExporter:
                 status_callback("Writing Keywords_Wide sheet...")
             ws_keywords_wide = wb.create_sheet("Keywords_Wide")
             self._write_keywords_wide(ws_keywords_wide)
+            sheets_created.append("Keywords_Wide")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -238,6 +310,7 @@ class XLSXExporter:
                 ws_counts_all, stats_model, self._gate_ids, "All Gates Counts",
                 data_type=FrequencyDataType.COUNTS
             )
+            sheets_created.append("Counts_All")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -251,6 +324,7 @@ class XLSXExporter:
                 ws_counts_selected, stats_model, self._gate_ids, "Selected Gates Counts",
                 data_type=FrequencyDataType.COUNTS
             )
+            sheets_created.append("Counts_Selected")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -264,6 +338,7 @@ class XLSXExporter:
                 ws_freq_all, stats_model, self._gate_ids, "All Gates Frequencies",
                 data_type=FrequencyDataType.PERCENT
             )
+            sheets_created.append("Frequencies_All")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -277,6 +352,7 @@ class XLSXExporter:
                 ws_freq_selected, stats_model, self._gate_ids, "Selected Gates Frequencies",
                 data_type=FrequencyDataType.PERCENT
             )
+            sheets_created.append("Frequencies_Selected")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -292,6 +368,7 @@ class XLSXExporter:
                     ws_counts_all_tidy, stats_model, self._gate_ids, "All Gates Counts Tidy",
                     data_type=FrequencyDataType.COUNTS
                 )
+                sheets_created.append("Counts_All_Tidy")
                 current_step += 1
                 if progress_callback:
                     progress_callback(current_step, total_steps)
@@ -305,6 +382,7 @@ class XLSXExporter:
                     ws_counts_selected_tidy, stats_model, self._gate_ids, "Selected Gates Counts Tidy",
                     data_type=FrequencyDataType.COUNTS
                 )
+                sheets_created.append("Counts_Selected_Tidy")
                 current_step += 1
                 if progress_callback:
                     progress_callback(current_step, total_steps)
@@ -318,6 +396,7 @@ class XLSXExporter:
                     ws_freq_all_tidy, stats_model, self._gate_ids, "All Gates Frequencies Tidy",
                     data_type=FrequencyDataType.PERCENT
                 )
+                sheets_created.append("Frequencies_All_Tidy")
                 current_step += 1
                 if progress_callback:
                     progress_callback(current_step, total_steps)
@@ -331,6 +410,7 @@ class XLSXExporter:
                     ws_freq_selected_tidy, stats_model, self._gate_ids, "Selected Gates Frequencies Tidy",
                     data_type=FrequencyDataType.PERCENT
                 )
+                sheets_created.append("Frequencies_Selected_Tidy")
                 current_step += 1
                 if progress_callback:
                     progress_callback(current_step, total_steps)
@@ -356,6 +436,7 @@ class XLSXExporter:
                     "MFI Selected",
                     include_gate_stats=False
                 )
+            sheets_created.append("MFI_Selected")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -372,6 +453,7 @@ class XLSXExporter:
                 "MFI All",
                 include_gate_stats=False
             )
+            sheets_created.append("MFI_All")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -397,6 +479,7 @@ class XLSXExporter:
                     "Concatenated Selected",
                     include_gate_stats=True
                 )
+            sheets_created.append("Concatenated_Selected")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -413,6 +496,7 @@ class XLSXExporter:
                 "Concatenated All",
                 include_gate_stats=True
             )
+            sheets_created.append("Concatenated_All")
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
@@ -441,6 +525,7 @@ class XLSXExporter:
                     sheet_name = self._write_normalized_frequency_sheet(
                         wb, ref_gate_id, df, existing_sheet_names
                     )
+                    sheets_created.append(sheet_name)
                     logger.debug(f"Created sheet '{sheet_name}' for reference gate '{ref_gate_id}'")
 
             # Tidy format: combined sheet
@@ -455,6 +540,7 @@ class XLSXExporter:
 
             if not normalized_tidy.empty:
                 self._write_normalized_frequencies_tidy_sheet(wb, normalized_tidy)
+                sheets_created.append("Normalized_Freq_Tidy")
 
         # Sheet (if warnings): Warnings
         if self._warnings:
@@ -462,6 +548,7 @@ class XLSXExporter:
                 status_callback("Writing Warnings sheet...")
             ws_warnings = wb.create_sheet("Warnings")
             self._write_warnings(ws_warnings)
+            sheets_created.append("Warnings")
             logger.warning(f"Export completed with {len(self._warnings)} warnings")
 
         # Final cancellation check before saving
@@ -479,6 +566,62 @@ class XLSXExporter:
         timer.summary(cache_stats=cache_stats)
 
         logger.info(f"Export saved to {filepath}")
+
+        # Build export summary
+        unique_channels = set(self._all_markers)
+        if self._selected_markers:
+            unique_channels.update(self._selected_markers)
+        samples_count = len(processing_sample_ids)
+        mfi_metric_names = [m.value for m in self._mfi_metrics]
+
+        # Calculate total MFI calculations
+        # If using sparse matrix selections, count actual selections
+        if self._matrix_selections:
+            total_mfi = len(self._matrix_selections) * len(self._mfi_metrics) * samples_count
+        else:
+            total_mfi = len(self._gate_ids) * len(unique_channels) * len(self._mfi_metrics) * samples_count
+
+        frequency_calcs = len(self._gate_ids) * samples_count
+
+        # Count keywords
+        if self._selected_keywords:
+            keywords_count = len(self._selected_keywords)
+        else:
+            all_keywords = self._keywords_model.get_available_keywords()
+            keywords_count = len(all_keywords)
+
+        # Count compensation failures from warnings
+        comp_failed_count = sum(
+            1 for w in self._warnings
+            if "compensation" in w.lower() and "failed" in w.lower()
+        )
+
+        summary = ExportSummary(
+            success=True,
+            filepath=filepath,
+            samples_processed=samples_count,
+            gates_exported=len(self._gate_ids),
+            keywords_exported=keywords_count,
+            compensation=CompensationSummary(
+                mode=self._data_source,
+                total_samples=samples_count,
+                matrices_used=matrices_used,
+                failed_samples=comp_failed_count,
+                spectral_samples=spectral_count
+            ),
+            statistics=StatisticsSummary(
+                gates_exported=len(self._gate_ids),
+                channels_analyzed=len(unique_channels),
+                mfi_metrics=mfi_metric_names,
+                total_mfi_calculations=total_mfi,
+                frequency_calculations=frequency_calcs
+            ),
+            sheets_created=sheets_created,
+            warnings=self._warnings.copy(),
+            errors=[]
+        )
+
+        return summary
 
     def get_warnings(self) -> List[str]:
         """Get list of warnings/errors from the export."""

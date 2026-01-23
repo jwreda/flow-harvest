@@ -90,6 +90,13 @@ class MockWorkspaceModel:
         """Get info about gates missing from samples (mock returns empty dict)."""
         return {}
 
+    def get_workspace_compensation_info(self):
+        """Get compensation info (mock returns empty structure)."""
+        return {
+            'matrices': {},
+            'assignments': {}
+        }
+
 
 def create_test_sample(sample_id, name, keywords):
     """Create a test sample."""

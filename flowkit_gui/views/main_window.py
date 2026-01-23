@@ -35,6 +35,7 @@ from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
 from .gate_marker_matrix_view import GateMarkerMatrixView
 from .styled_tree_delegate import AccentedTreeItemDelegate
 from .colored_gate_tree_delegate import ColoredGateTreeDelegate
+from .export_summary_dialog import ExportSummaryDialog
 from ..exporters.xlsx_exporter import XLSXExporter
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
@@ -695,6 +696,10 @@ class MainWindow(QMainWindow):
         self._sample_tree_delegate = AccentedTreeItemDelegate(self._sample_selection_tree)
         self._sample_selection_tree.setItemDelegate(self._sample_tree_delegate)
 
+        # Set initial column widths
+        self._sample_selection_tree.setColumnWidth(0, 185)  # Sample column
+        self._sample_selection_tree.setColumnWidth(2, 40)   # Comp column
+
         sample_selection_layout.addWidget(self._sample_selection_tree)
 
         # Sample selection buttons
@@ -1332,6 +1337,7 @@ class MainWindow(QMainWindow):
             compensation_assignments=compensation_assignments
         )
         self._sample_selection_tree.expandAll()
+        self._sample_selection_tree.collapseAll()
         self._update_sample_selection_header()
 
         # Show the "Load Selected Samples" button
@@ -1428,6 +1434,7 @@ class MainWindow(QMainWindow):
             default_selected=True
         )
         self._sample_selection_tree.expandAll()
+        self._sample_selection_tree.collapseAll()
         self._update_sample_selection_header()
         self._update_comp_details_panel()
 
@@ -2176,7 +2183,7 @@ class MainWindow(QMainWindow):
                 QApplication.processEvents()
 
             # Export with progress, status, and cancellation callbacks
-            exporter.export(
+            summary = exporter.export(
                 file_path,
                 progress_callback=update_progress,
                 status_callback=update_status,
@@ -2185,22 +2192,9 @@ class MainWindow(QMainWindow):
 
             progress.close()
 
-            # Check for warnings
-            warnings = exporter.get_warnings()
-            if warnings:
-                warning_msg = f"Export completed with {len(warnings)} warning(s).\n\n"
-                warning_msg += "See 'Warnings' sheet in the exported file for details."
-                QMessageBox.warning(
-                    self,
-                    "Export Complete (with warnings)",
-                    warning_msg
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "Export Complete",
-                    f"Data exported successfully to:\n{file_path}"
-                )
+            # Show rich summary dialog
+            summary_dialog = ExportSummaryDialog(summary, parent=self)
+            summary_dialog.exec_()
 
             logger.info(f"Export completed: {file_path}")
 

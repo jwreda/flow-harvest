@@ -71,6 +71,13 @@ class MockWorkspaceModel:
         """Get info about gates missing from samples (mock returns empty dict)."""
         return {}
 
+    def get_workspace_compensation_info(self):
+        """Get compensation info (mock returns empty structure)."""
+        return {
+            'matrices': {},
+            'assignments': {}
+        }
+
 
 def create_test_sample(sample_id, name, keywords):
     """Create a test sample."""
@@ -589,6 +596,194 @@ class TestXLSXExporterSheetCount:
         assert "Counts_All" in wb.sheetnames
         assert "Frequencies_All" in wb.sheetnames
         assert len(wb.sheetnames) == 6
+
+
+class TestXLSXExporterSummary:
+    """Tests for export summary generation."""
+
+    def test_export_returns_summary(self, tmp_path):
+        """Test that export returns an ExportSummary."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter, ExportSummary
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([
+            create_test_gate("cells", "Cells", ("Cells",))
+        ])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "123"})
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=["cells"],
+            selected_markers=[],
+            all_markers=[],
+            mfi_metrics=[MFIMetric.MEAN],
+            include_wide_keywords=False
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        assert summary is not None
+        assert isinstance(summary, ExportSummary)
+        assert summary.success == True
+
+    def test_export_summary_sample_count(self, tmp_path):
+        """Test that summary correctly reports sample count."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "1"}),
+            create_test_sample("s2", "Sample2.fcs", {"Mouse #": "2"}),
+            create_test_sample("s3", "Sample3.fcs", {"Mouse #": "3"}),
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=[],
+            selected_markers=[],
+            all_markers=[],
+            mfi_metrics=[MFIMetric.MEAN],
+            include_wide_keywords=False
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        assert summary.samples_processed == 3
+
+    def test_export_summary_gate_count(self, tmp_path):
+        """Test that summary correctly reports gate count."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([
+            create_test_gate("cells", "Cells", ("Cells",)),
+            create_test_gate("live", "Live", ("Cells", "Live")),
+            create_test_gate("cd4", "CD4+", ("Cells", "Live", "CD4+")),
+        ])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "1"})
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=["cells", "live", "cd4"],
+            selected_markers=[],
+            all_markers=[],
+            mfi_metrics=[MFIMetric.MEAN],
+            include_wide_keywords=False
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        assert summary.gates_exported == 3
+
+    def test_export_summary_sheets_created(self, tmp_path):
+        """Test that summary lists all created sheets."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "1"})
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=[],
+            selected_markers=[],
+            all_markers=[],
+            mfi_metrics=[MFIMetric.MEAN],
+            include_wide_keywords=True
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        assert "Gating_Strategy" in summary.sheets_created
+        assert "Keywords" in summary.sheets_created
+        assert "Keywords_Wide" in summary.sheets_created
+
+    def test_export_summary_mfi_metrics(self, tmp_path):
+        """Test that summary correctly reports MFI metrics."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "1"})
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=[],
+            selected_markers=["CD4", "CD8"],
+            all_markers=["CD4", "CD8"],
+            mfi_metrics=[MFIMetric.MEAN, MFIMetric.MEDIAN, MFIMetric.GEOMETRIC_MEAN],
+            include_wide_keywords=False
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        assert len(summary.statistics.mfi_metrics) == 3
+        assert "Mean" in summary.statistics.mfi_metrics
+        assert "Median" in summary.statistics.mfi_metrics
+        assert "GeoMean" in summary.statistics.mfi_metrics
+
+    def test_export_summary_channel_count(self, tmp_path):
+        """Test that summary correctly reports channel count."""
+        from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
+
+        workspace = MockWorkspaceModel()
+        workspace.set_gates([])
+        workspace.set_samples([
+            create_test_sample("s1", "Sample1.fcs", {"Mouse #": "1"})
+        ])
+
+        keywords_model = KeywordsModel()
+        keywords_model.set_samples(workspace.samples)
+
+        exporter = XLSXExporter(
+            workspace=workspace,
+            keywords_model=keywords_model,
+            gate_ids=[],
+            selected_markers=["CD4", "CD8"],
+            all_markers=["CD4", "CD8", "CD45", "CD3"],
+            mfi_metrics=[MFIMetric.MEAN],
+            include_wide_keywords=False
+        )
+
+        filepath = tmp_path / "test.xlsx"
+        summary = exporter.export(str(filepath))
+
+        # Should include unique channels from both selected and all markers
+        assert summary.statistics.channels_analyzed == 4
 
 
 if __name__ == "__main__":
