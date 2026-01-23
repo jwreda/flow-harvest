@@ -21,9 +21,9 @@ from PyQt5.QtWidgets import (
     QHeaderView, QAbstractItemView, QScrollArea, QGridLayout,
     QFrame, QRadioButton, QButtonGroup, QTabWidget, QListWidget,
     QListWidgetItem, QActionGroup, QDialog, QDialogButtonBox,
-    QTextEdit, QApplication
+    QTextEdit, QApplication, QSpinBox, QLineEdit
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor
 
 from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample, SampleCompensationAssignment
@@ -447,6 +447,14 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # Edit menu
+        edit_menu = menubar.addMenu("&Edit")
+
+        settings_action = QAction("&Settings...", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._show_settings_dialog)
+        edit_menu.addAction(settings_action)
+
         # View menu
         view_menu = menubar.addMenu("&View")
 
@@ -545,6 +553,37 @@ class MainWindow(QMainWindow):
             "Include Counts_All, Frequencies_All, MFI_All, and Concatenated_All sheets"
         )
         bottom_layout.addWidget(self._include_all_sheets_checkbox)
+
+        bottom_layout.addSpacing(20)
+
+        # Volume normalization controls
+        self._volume_normalize_checkbox = QCheckBox("Normalize to volume")
+        self._volume_normalize_checkbox.setChecked(False)
+        self._volume_normalize_checkbox.setToolTip(
+            "Export counts normalized to specified volume (requires $VOL keyword in samples)"
+        )
+        bottom_layout.addWidget(self._volume_normalize_checkbox)
+
+        vol_label = QLabel("per")
+        bottom_layout.addWidget(vol_label)
+
+        self._volume_denominator_spinbox = QSpinBox()
+        self._volume_denominator_spinbox.setRange(1, 10000)
+        self._volume_denominator_spinbox.setValue(100)
+        self._volume_denominator_spinbox.setSuffix(" μL")
+        self._volume_denominator_spinbox.setEnabled(False)
+        self._volume_denominator_spinbox.setToolTip(
+            "Target volume for normalization (e.g., 100 for cells per 100 μL)"
+        )
+        self._volume_denominator_spinbox.setMinimumWidth(80)
+        bottom_layout.addWidget(self._volume_denominator_spinbox)
+
+        # Connect checkbox to enable/disable spinbox
+        self._volume_normalize_checkbox.toggled.connect(
+            self._volume_denominator_spinbox.setEnabled
+        )
+
+        bottom_layout.addSpacing(20)
 
         self._main_export_btn = AnimatedButton("  Export to XLSX", primary=True)
         self._main_export_btn.setIcon(get_icon("sparkles-arrow"))
@@ -2136,6 +2175,18 @@ class MainWindow(QMainWindow):
 
             # Create exporter with selected samples and matrix selections
             include_all_sheets = self._include_all_sheets_checkbox.isChecked()
+
+            # Update keywords model with allowed system keywords from settings
+            allowed_system_keywords = self._load_system_keywords_settings()
+            self._keywords_model.set_allowed_system_keywords(allowed_system_keywords)
+            logger.info(f"System keywords for export: {allowed_system_keywords}")
+
+            # Get volume normalization settings
+            volume_normalize = self._volume_normalize_checkbox.isChecked()
+            volume_denominator = self._volume_denominator_spinbox.value()
+            if volume_normalize:
+                logger.info(f"Volume normalization enabled: per {volume_denominator} μL")
+
             exporter = XLSXExporter(
                 workspace=self._workspace_model,
                 keywords_model=self._keywords_model,
@@ -2152,7 +2203,9 @@ class MainWindow(QMainWindow):
                 selected_sample_ids=selected_sample_ids,
                 matrix_selections=matrix_selections,
                 reference_gate_ids=reference_gate_ids,
-                descendant_depth=descendant_depth
+                descendant_depth=descendant_depth,
+                volume_normalize=volume_normalize,
+                volume_denominator=volume_denominator
             )
 
             # Show progress dialog with detailed status
@@ -2227,6 +2280,118 @@ class MainWindow(QMainWindow):
             # Clear caches after export to free memory for large datasets
             self._workspace_model.clear_cache()
             logger.info("Cleared caches after export")
+
+    def _show_settings_dialog(self):
+        """Show the settings dialog for system keywords configuration."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setMinimumWidth(500)
+
+        layout = QVBoxLayout(dialog)
+
+        # System Keywords section
+        group = QGroupBox("System Keywords to Include in Export")
+        group_layout = QVBoxLayout()
+
+        # Load current settings
+        allowed = self._load_system_keywords_settings()
+
+        # Common system keywords checkboxes
+        vol_checkbox = QCheckBox("$VOL (Sample Volume)")
+        vol_checkbox.setChecked('$VOL' in allowed)
+        vol_checkbox.setToolTip("Include sample volume for normalization calculations")
+        group_layout.addWidget(vol_checkbox)
+
+        date_checkbox = QCheckBox("$DATE (Acquisition Date)")
+        date_checkbox.setChecked('$DATE' in allowed)
+        group_layout.addWidget(date_checkbox)
+
+        btim_checkbox = QCheckBox("$BTIM (Begin Time)")
+        btim_checkbox.setChecked('$BTIM' in allowed)
+        group_layout.addWidget(btim_checkbox)
+
+        etim_checkbox = QCheckBox("$ETIM (End Time)")
+        etim_checkbox.setChecked('$ETIM' in allowed)
+        group_layout.addWidget(etim_checkbox)
+
+        # Custom keywords field
+        custom_label = QLabel("Custom Keywords (comma-separated):")
+        group_layout.addWidget(custom_label)
+
+        custom_keywords_field = QLineEdit()
+        custom_keywords_field.setPlaceholderText("e.g., $CUSTOM1, $CUSTOM2")
+        # Set custom keywords (those not in the standard set)
+        standard_keywords = {'$VOL', '$DATE', '$BTIM', '$ETIM'}
+        custom = allowed - standard_keywords
+        if custom:
+            custom_keywords_field.setText(', '.join(sorted(custom)))
+        group_layout.addWidget(custom_keywords_field)
+
+        group.setLayout(group_layout)
+        layout.addWidget(group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+
+        reset_btn = QPushButton("Reset to Defaults")
+        def reset_to_defaults():
+            vol_checkbox.setChecked(True)
+            date_checkbox.setChecked(False)
+            btim_checkbox.setChecked(False)
+            etim_checkbox.setChecked(False)
+            custom_keywords_field.clear()
+        reset_btn.clicked.connect(reset_to_defaults)
+        button_layout.addWidget(reset_btn)
+
+        button_layout.addStretch()
+
+        save_btn = QPushButton("Save")
+        def save_settings():
+            new_allowed = set()
+            if vol_checkbox.isChecked():
+                new_allowed.add('$VOL')
+            if date_checkbox.isChecked():
+                new_allowed.add('$DATE')
+            if btim_checkbox.isChecked():
+                new_allowed.add('$BTIM')
+            if etim_checkbox.isChecked():
+                new_allowed.add('$ETIM')
+
+            # Parse custom keywords
+            custom_text = custom_keywords_field.text().strip()
+            if custom_text:
+                for kw in custom_text.split(','):
+                    kw = kw.strip()
+                    if kw:
+                        new_allowed.add(kw)
+
+            self._save_system_keywords_settings(new_allowed)
+            dialog.accept()
+
+        save_btn.clicked.connect(save_settings)
+        button_layout.addWidget(save_btn)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        layout.addLayout(button_layout)
+
+        dialog.exec_()
+
+    def _load_system_keywords_settings(self) -> set:
+        """Load allowed system keywords from QSettings."""
+        settings = QSettings('FlowKit', 'FlowKitGUI')
+        allowed = settings.value('system_keywords/allowed', ['$VOL'])
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        return set(allowed) if allowed else {'$VOL'}
+
+    def _save_system_keywords_settings(self, keywords: set) -> None:
+        """Save allowed system keywords to QSettings."""
+        settings = QSettings('FlowKit', 'FlowKitGUI')
+        settings.setValue('system_keywords/allowed', list(keywords))
+        logger.info(f"Saved system keywords settings: {keywords}")
 
     def _on_about(self):
         """Show about dialog."""

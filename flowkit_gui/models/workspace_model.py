@@ -72,10 +72,33 @@ class Sample:
     keywords: Dict[str, str] = field(default_factory=dict)
     event_count: int = 0
 
-    def get_custom_keywords(self) -> Dict[str, str]:
-        """Returns only user-defined keywords, filtering out system keys."""
+    def get_custom_keywords(
+        self,
+        include_system_keywords: Optional[Set[str]] = None
+    ) -> Dict[str, str]:
+        """
+        Returns only user-defined keywords, filtering out system keys.
+
+        Args:
+            include_system_keywords: Optional set of system keyword names to include
+                                    even though they would normally be filtered out.
+                                    For example, {'$VOL', '$DATE'} to include those
+                                    keywords in the output. Default is None (filter all).
+
+        Returns:
+            Dict of keyword name to value for non-system keywords
+            (plus any explicitly included system keywords).
+        """
+        if include_system_keywords is None:
+            include_system_keywords = set()
+
         result = {}
         for k, v in self.keywords.items():
+            # Check if explicitly included (before filtering)
+            if k in include_system_keywords or k.upper() in {s.upper() for s in include_system_keywords}:
+                result[k] = v
+                continue
+
             # Skip if starts with system prefix
             if any(k.upper().startswith(prefix) for prefix in SYSTEM_KEYWORD_PREFIXES):
                 continue

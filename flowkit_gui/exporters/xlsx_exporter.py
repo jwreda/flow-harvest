@@ -102,7 +102,9 @@ class XLSXExporter:
         selected_sample_ids: Optional[List[str]] = None,
         matrix_selections: Optional[List[tuple]] = None,
         reference_gate_ids: Optional[List[str]] = None,
-        descendant_depth: int = 0
+        descendant_depth: int = 0,
+        volume_normalize: bool = False,
+        volume_denominator: float = 100.0
     ):
         """
         Initialize exporter.
@@ -124,6 +126,8 @@ class XLSXExporter:
             matrix_selections: List of (gate_id, channel) tuples for sparse MFI selection
             reference_gate_ids: Gates to use as normalization references for frequency sheets
             descendant_depth: Max depth for descendant gates (0 = unlimited)
+            volume_normalize: Whether to calculate volume-normalized counts
+            volume_denominator: Denominator for normalization (e.g., 100 for per 100 μL)
         """
         self._workspace = workspace
         self._keywords_model = keywords_model
@@ -141,6 +145,8 @@ class XLSXExporter:
         self._matrix_selections = matrix_selections
         self._reference_gate_ids = reference_gate_ids or []
         self._descendant_depth = descendant_depth
+        self._volume_normalize = volume_normalize
+        self._volume_denominator = volume_denominator
         self._warnings: List[str] = []
 
         # Build matrix selections lookup for efficient checking
@@ -301,6 +307,26 @@ class XLSXExporter:
         if cancellation_token:
             cancellation_token.check_cancelled()
 
+        # Calculate volume-normalized counts if enabled
+        normalized_counts_df = None
+        if self._volume_normalize:
+            if status_callback:
+                status_callback("Calculating volume-normalized counts...")
+            with timer.step("Calculate normalized counts"):
+                try:
+                    volume_warnings = stats_model.calculate_normalized_counts(
+                        denominator=self._volume_denominator,
+                        gate_ids=self._gate_ids,
+                        sample_ids=self._selected_sample_ids
+                    )
+                    normalized_counts_df = stats_model.normalized_counts_df
+                    if volume_warnings:
+                        self._warnings.extend(volume_warnings)
+                        logger.info(f"Volume normalization: {len(volume_warnings)} samples missing $VOL")
+                except Exception as e:
+                    logger.error(f"Volume normalization failed: {e}")
+                    self._warnings.append(f"Volume normalization failed: {e}")
+
         # Sheet: Counts_All (wide format, counts only)
         if self._include_all_sheets:
             if status_callback:
@@ -328,6 +354,30 @@ class XLSXExporter:
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
+
+        # Sheet: Volume-normalized counts (if enabled)
+        if self._volume_normalize and normalized_counts_df is not None:
+            if status_callback:
+                sheet_name = self._get_volume_sheet_name(include_all=False)
+                status_callback(f"Writing {sheet_name} sheet...")
+            ws_vol_norm = wb.create_sheet(sheet_name)
+            self._write_normalized_counts_sheet(ws_vol_norm, normalized_counts_df, sheet_name)
+            sheets_created.append(sheet_name)
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
+
+            # Also create _All version if include_all_sheets is enabled
+            if self._include_all_sheets:
+                sheet_name_all = self._get_volume_sheet_name(include_all=True)
+                if status_callback:
+                    status_callback(f"Writing {sheet_name_all} sheet...")
+                ws_vol_norm_all = wb.create_sheet(sheet_name_all)
+                self._write_normalized_counts_sheet(ws_vol_norm_all, normalized_counts_df, sheet_name_all)
+                sheets_created.append(sheet_name_all)
+                current_step += 1
+                if progress_callback:
+                    progress_callback(current_step, total_steps)
 
         # Sheet: Frequencies_All (wide format, percentages only)
         if self._include_all_sheets:
@@ -459,6 +509,7 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Concatenated_Selected - Gate stats + sparse MFI
+        # Columns reordered by measurement type: counts → normalized counts → %parent → MFI
         if has_selected_markers:
             if status_callback:
                 status_callback("Writing Concatenated_Selected sheet...")
@@ -469,7 +520,9 @@ class XLSXExporter:
                     stats_model,
                     self._matrix_selections,
                     "Concatenated Selected (sparse)",
-                    include_gate_stats=True
+                    include_gate_stats=True,
+                    normalized_counts_df=normalized_counts_df if self._volume_normalize else None,
+                    reorder_columns=True
                 )
             else:
                 self._write_statistics_sheet(
@@ -477,7 +530,9 @@ class XLSXExporter:
                     stats_model,
                     self._selected_markers,
                     "Concatenated Selected",
-                    include_gate_stats=True
+                    include_gate_stats=True,
+                    normalized_counts_df=normalized_counts_df if self._volume_normalize else None,
+                    reorder_columns=True
                 )
             sheets_created.append("Concatenated_Selected")
             current_step += 1
@@ -485,6 +540,7 @@ class XLSXExporter:
                 progress_callback(current_step, total_steps)
 
         # Sheet: Concatenated_All - All gate stats + all MFI
+        # Columns reordered by measurement type: counts → normalized counts → %parent → MFI
         if self._include_all_sheets:
             if status_callback:
                 status_callback("Writing Concatenated_All sheet...")
@@ -494,7 +550,9 @@ class XLSXExporter:
                 stats_model,
                 self._all_markers,
                 "Concatenated All",
-                include_gate_stats=True
+                include_gate_stats=True,
+                normalized_counts_df=normalized_counts_df if self._volume_normalize else None,
+                reorder_columns=True
             )
             sheets_created.append("Concatenated_All")
             current_step += 1
@@ -697,7 +755,9 @@ class XLSXExporter:
         stats_model: StatisticsModel,
         markers: List[str],
         description: str,
-        include_gate_stats: bool = True
+        include_gate_stats: bool = True,
+        normalized_counts_df: Optional[pd.DataFrame] = None,
+        reorder_columns: bool = False
     ) -> None:
         """
         Write statistics sheet using pre-calculated StatisticsModel.
@@ -707,8 +767,12 @@ class XLSXExporter:
             stats_model: Pre-calculated StatisticsModel with all needed data
             markers: List of markers to include in this sheet
             description: Description for logging
-            include_gate_stats: If True, include count/%parent/%total columns.
+            include_gate_stats: If True, include count/%parent columns.
                                If False, only include MFI columns (for MFI-only sheets).
+            normalized_counts_df: Optional DataFrame with volume-normalized counts
+                                 to merge into the sheet (for Concatenated sheets).
+            reorder_columns: If True, reorder columns by measurement type
+                            (for Concatenated sheets).
         """
         logger.debug(f"Writing statistics sheet: {description}")
 
@@ -724,6 +788,10 @@ class XLSXExporter:
         if df.empty:
             ws.append([f"No data available for {description}"])
             return
+
+        # Reorder columns for Concatenated sheets
+        if reorder_columns and include_gate_stats:
+            df = self._reorder_concatenated_columns(df, normalized_counts_df)
 
         # Write header
         headers = list(df.columns)
@@ -752,7 +820,9 @@ class XLSXExporter:
         stats_model: StatisticsModel,
         matrix_selections: List[tuple],
         description: str,
-        include_gate_stats: bool = True
+        include_gate_stats: bool = True,
+        normalized_counts_df: Optional[pd.DataFrame] = None,
+        reorder_columns: bool = False
     ) -> None:
         """
         Write statistics sheet with sparse MFI columns.
@@ -765,8 +835,12 @@ class XLSXExporter:
             stats_model: Pre-calculated StatisticsModel with all needed data
             matrix_selections: List of (gate_id, channel) tuples for MFI columns
             description: Description for logging
-            include_gate_stats: If True, include count/%parent/%total for all tree-selected gates.
+            include_gate_stats: If True, include count/%parent for all tree-selected gates.
                                If False, only include MFI columns (for MFI-only sheets).
+            normalized_counts_df: Optional DataFrame with volume-normalized counts
+                                 to merge into the sheet (for Concatenated sheets).
+            reorder_columns: If True, reorder columns by measurement type
+                            (for Concatenated sheets).
         """
         logger.debug(f"Writing sparse statistics sheet: {description}")
         logger.info(f"Sparse export: {len(matrix_selections)} specific gate/marker combinations")
@@ -783,6 +857,10 @@ class XLSXExporter:
         if df.empty:
             ws.append([f"No data available for {description}"])
             return
+
+        # Reorder columns for Concatenated sheets
+        if reorder_columns and include_gate_stats:
+            df = self._reorder_concatenated_columns(df, normalized_counts_df)
 
         # Write header
         headers = list(df.columns)
@@ -915,6 +993,9 @@ class XLSXExporter:
         """
         Write a single reference gate's normalized frequencies.
 
+        Note: Count columns are removed per user feedback - counts are available
+        in the Counts_* and Concatenated_* sheets.
+
         Args:
             workbook: The openpyxl Workbook
             ref_gate_id: The reference gate ID (full path)
@@ -950,6 +1031,14 @@ class XLSXExporter:
             ws.append([f"No data available for reference gate: {ref_gate_id}"])
             return sheet_name
 
+        # Remove count columns - keep only percentage and metadata columns
+        # Count data is available in Counts_* sheets and Concatenated sheets
+        cols_to_keep = [col for col in df.columns
+                        if not col.endswith('_count') or col == 'ref_count']
+        # Actually remove ref_count too - only keep sample info, keywords, and percentages
+        cols_to_keep = [col for col in cols_to_keep if col != 'ref_count']
+        df = df[cols_to_keep]
+
         # Write header
         headers = list(df.columns)
         ws.append(headers)
@@ -964,7 +1053,7 @@ class XLSXExporter:
         # Freeze first columns (sample info + keywords) and header row
         freeze_col = 'D'  # Default: after sample_id, sample_name, and some keywords
         for i, col in enumerate(df.columns):
-            if '_count' in col or '_%of_' in col:
+            if '_%of_' in col:
                 freeze_col = chr(ord('A') + min(i, 25))  # Cap at 'Z'
                 break
 
@@ -1099,3 +1188,172 @@ class XLSXExporter:
             # Simple case: use dataframe_to_rows (already imported)
             for row in dataframe_to_rows(df, index=False, header=False):
                 ws.append(row)
+
+    def _remove_percent_total_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Remove all %total columns from DataFrame.
+
+        Args:
+            df: DataFrame with columns that may include %total
+
+        Returns:
+            DataFrame with %total columns removed
+        """
+        cols_to_keep = [col for col in df.columns if '%total' not in col.lower()]
+        return df[cols_to_keep]
+
+    def _reorder_concatenated_columns(
+        self,
+        df: pd.DataFrame,
+        normalized_counts_df: Optional[pd.DataFrame] = None
+    ) -> pd.DataFrame:
+        """
+        Reorder columns by measurement type for Concatenated sheets.
+
+        Order: sample info → counts → normalized counts (if any) → %parent → MFI
+
+        Args:
+            df: DataFrame with mixed columns
+            normalized_counts_df: Optional DataFrame with volume-normalized counts
+
+        Returns:
+            DataFrame with reordered columns
+        """
+        cols = list(df.columns)
+
+        # Categorize columns
+        sample_cols = []  # sample_id, sample_name
+        keyword_cols = []  # User keywords
+        count_cols = []  # Raw counts
+        parent_cols = []  # %parent
+        mfi_cols = []  # MFI values
+
+        for col in cols:
+            if col in ('sample_id', 'sample_name'):
+                sample_cols.append(col)
+            elif '_count' in col and '%' not in col:
+                count_cols.append(col)
+            elif '%parent' in col.lower():
+                parent_cols.append(col)
+            elif any(metric in col for metric in ('_Mean_', '_Median_', '_GeoMean_')):
+                mfi_cols.append(col)
+            else:
+                # Must be a keyword column
+                keyword_cols.append(col)
+
+        # Sort each group alphabetically for consistency
+        count_cols.sort()
+        parent_cols.sort()
+        mfi_cols.sort()
+        keyword_cols.sort()
+
+        # Build new column order
+        new_order = sample_cols + keyword_cols + count_cols
+
+        # Add normalized counts if available
+        if normalized_counts_df is not None and not normalized_counts_df.empty:
+            # Merge normalized counts into df
+            # Rename columns to include denominator suffix
+            norm_df = normalized_counts_df.copy()
+            denom = int(self._volume_denominator)
+            if denom == 1000:
+                suffix = '_per_mL'
+            else:
+                suffix = f'_per_{denom}uL'
+
+            # Rename count columns to normalized format
+            new_names = {}
+            for col in norm_df.columns:
+                if col == 'sample_id':
+                    continue
+                # Replace _count with normalized suffix
+                if col.endswith('_count'):
+                    new_col = col.replace('_count', f'_count{suffix}')
+                    new_names[col] = new_col
+
+            norm_df = norm_df.rename(columns=new_names)
+
+            # Merge into main df
+            df = df.merge(norm_df, on='sample_id', how='left')
+
+            # Add normalized columns to order
+            norm_cols = sorted([col for col in norm_df.columns if col != 'sample_id'])
+            new_order.extend(norm_cols)
+
+        new_order.extend(parent_cols)
+        new_order.extend(mfi_cols)
+
+        # Return reordered DataFrame
+        final_cols = [c for c in new_order if c in df.columns]
+        return df[final_cols]
+
+    def _get_volume_sheet_name(self, include_all: bool = False) -> str:
+        """
+        Generate descriptive sheet name for volume-normalized counts.
+
+        Returns:
+            Sheet name like "Counts_per_100uL" or "Counts_per_mL"
+        """
+        denom = int(self._volume_denominator)
+        if denom == 1000:
+            base = "Counts_per_mL"
+        else:
+            base = f"Counts_per_{denom}uL"
+
+        return f"{base}_All" if include_all else base
+
+    def _write_normalized_counts_sheet(
+        self,
+        ws,
+        df: pd.DataFrame,
+        description: str
+    ) -> None:
+        """
+        Write volume-normalized counts to a worksheet.
+
+        Args:
+            ws: Worksheet to write to
+            df: DataFrame with normalized counts (from StatisticsModel)
+            description: Description for logging
+        """
+        logger.debug(f"Writing normalized counts sheet: {description}")
+
+        if df.empty:
+            ws.append([f"No data available for {description}"])
+            return
+
+        # Rename columns to include unit suffix
+        denom = int(self._volume_denominator)
+        if denom == 1000:
+            suffix = '_per_mL'
+        else:
+            suffix = f'_per_{denom}uL'
+
+        # Create new column names
+        new_columns = []
+        for col in df.columns:
+            if col == 'sample_id':
+                new_columns.append(col)
+            elif col.endswith('_count'):
+                # Replace _count with the volume suffix
+                new_col = col.replace('_count', f'_count{suffix}')
+                new_columns.append(new_col)
+            else:
+                new_columns.append(col)
+
+        df = df.copy()
+        df.columns = new_columns
+
+        # Write header
+        headers = list(df.columns)
+        ws.append(headers)
+        self._style_header_row(ws, 1)
+
+        # Write data (4 decimal places for normalized counts)
+        self._write_dataframe_rows(ws, df, decimal_places=4)
+
+        # Auto-fit columns
+        self._autofit_columns(ws, max_width=40)
+
+        # Freeze header row
+        ws.freeze_panes = "B2"

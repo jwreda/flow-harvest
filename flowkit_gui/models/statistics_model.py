@@ -76,6 +76,7 @@ class StatisticsModel:
         self._statistics: Dict[str, Dict[str, GateStatistics]] = {}
         # Structure: {sample_id: {gate_id: GateStatistics}}
         self._warnings: List[str] = []  # Collect warnings during calculation
+        self._normalized_counts_df: Optional[pd.DataFrame] = None  # Volume-normalized counts
 
     def calculate_statistics(
         self,
@@ -283,10 +284,10 @@ class StatisticsModel:
                     stats = self._statistics[sample_id][gate_id]
 
                     # Count and percent columns (only if include_gate_stats=True)
+                    # Note: %total is excluded per user feedback - not commonly used
                     if include_gate_stats:
                         row[f"{gate_id}_count"] = stats.event_count
                         row[f"{gate_id}_%parent"] = stats.percent_of_parent
-                        row[f"{gate_id}_%total"] = stats.percent_of_total
 
                     # MFI columns
                     for channel in channels:
@@ -355,7 +356,8 @@ class StatisticsModel:
                 for kw_name in sorted(custom.keys()):
                     row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
-            # Add gate statistics (count, %parent, %total) if enabled
+            # Add gate statistics (count, %parent) if enabled
+            # Note: %total is excluded per user feedback - not commonly used
             for gate_id in gate_ids_for_stats:
                 if sample_id in self._statistics and gate_id in self._statistics[sample_id]:
                     stats = self._statistics[sample_id][gate_id]
@@ -363,7 +365,6 @@ class StatisticsModel:
                     # Count and percent columns
                     row[f"{gate_id}_count"] = stats.event_count
                     row[f"{gate_id}_%parent"] = stats.percent_of_parent
-                    row[f"{gate_id}_%total"] = stats.percent_of_total
 
             # Add MFI columns ONLY for selected (gate_id, channel) pairs
             for gate_id, channel in selected_pairs:
@@ -789,3 +790,153 @@ class StatisticsModel:
         logger.info(f"Created tidy DataFrame: {len(rows)} rows")
 
         return result_df
+
+    def get_volume_keyword(self, sample_id: str) -> Optional[float]:
+        """
+        Extract $VOL keyword from sample.
+
+        Args:
+            sample_id: The sample ID to get volume for
+
+        Returns:
+            Volume in microliters (μL), or None if not available
+        """
+        sample = self._workspace.get_sample_by_id(sample_id)
+        if sample is None:
+            logger.debug(f"Sample '{sample_id}' not found for volume lookup")
+            return None
+
+        # $VOL is stored in the sample keywords
+        vol_str = sample.keywords.get('$VOL')
+        if not vol_str:
+            logger.debug(f"Sample '{sample_id}' has no $VOL keyword")
+            return None
+
+        try:
+            vol = float(vol_str)
+            if vol <= 0:
+                logger.warning(f"Sample '{sample_id}' has invalid $VOL value: {vol}")
+                return None
+            return vol
+        except ValueError:
+            logger.warning(f"Sample '{sample_id}' has non-numeric $VOL: '{vol_str}'")
+            return None
+
+    def calculate_normalized_counts(
+        self,
+        denominator: float,
+        gate_ids: Optional[List[str]] = None,
+        sample_ids: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Calculate volume-normalized counts.
+
+        Normalized count = (raw_count / $VOL) * denominator
+
+        For example, if $VOL is 50 μL and denominator is 100, the result
+        represents "cells per 100 μL".
+
+        Args:
+            denominator: Target volume for normalization (e.g., 100 for per 100 μL)
+            gate_ids: List of gate IDs to include. If None, uses all gates
+                     with calculated statistics.
+            sample_ids: List of sample IDs to include. If None, uses all samples
+                       from _included_samples.
+
+        Returns:
+            List of warning messages for samples with missing/invalid $VOL
+
+        Raises:
+            ValueError: If calculate_statistics() was not called first
+        """
+        if not self._statistics:
+            raise ValueError("Must call calculate_statistics() before calculate_normalized_counts()")
+
+        warnings = []
+
+        # Determine which samples to process
+        if sample_ids is not None:
+            sample_id_set = set(sample_ids)
+            samples = [s for s in getattr(self, '_included_samples', self._workspace.samples)
+                       if s.sample_id in sample_id_set]
+        else:
+            samples = getattr(self, '_included_samples', self._workspace.samples)
+
+        # Determine which gates to include
+        if gate_ids is None:
+            # Get all unique gate_ids from statistics
+            gate_ids = set()
+            for sample_stats in self._statistics.values():
+                gate_ids.update(sample_stats.keys())
+            gate_ids = sorted(gate_ids)
+
+        logger.info(f"Calculating normalized counts for {len(samples)} samples, "
+                    f"{len(gate_ids)} gates, denominator={denominator}")
+
+        rows = []
+
+        for sample in samples:
+            sample_id = sample.sample_id
+            vol = self.get_volume_keyword(sample_id)
+
+            row = {'sample_id': sample_id}
+
+            if vol is None or vol <= 0:
+                warning = f"Sample '{sample.name}' ({sample_id}): missing or invalid $VOL keyword"
+                warnings.append(warning)
+                logger.warning(warning)
+
+                # Fill with NaN for this sample
+                for gate_id in gate_ids:
+                    row[f"{gate_id}_count"] = float('nan')
+                rows.append(row)
+                continue
+
+            # Get statistics for each gate and calculate normalized count
+            if sample_id in self._statistics:
+                for gate_id in gate_ids:
+                    if gate_id in self._statistics[sample_id]:
+                        stats = self._statistics[sample_id][gate_id]
+                        raw_count = stats.event_count
+                        normalized = (raw_count / vol) * denominator
+                        row[f"{gate_id}_count"] = normalized
+                    else:
+                        row[f"{gate_id}_count"] = 0.0
+            else:
+                # Sample has no statistics, fill with zeros
+                for gate_id in gate_ids:
+                    row[f"{gate_id}_count"] = 0.0
+
+            rows.append(row)
+
+        self._normalized_counts_df = pd.DataFrame(rows)
+        logger.info(f"Created normalized counts DataFrame: {len(rows)} samples, "
+                    f"{len(warnings)} warnings")
+
+        # Add warnings to the model's warning list
+        self._warnings.extend(warnings)
+
+        return warnings
+
+    @property
+    def normalized_counts_df(self) -> Optional[pd.DataFrame]:
+        """Returns the calculated volume-normalized counts DataFrame."""
+        return self._normalized_counts_df
+
+    def get_volume_sheet_name(self, denominator: float, include_all: bool = False) -> str:
+        """
+        Generate descriptive sheet name for volume-normalized counts.
+
+        Args:
+            denominator: The volume denominator used
+            include_all: If True, adds "_All" suffix
+
+        Returns:
+            Sheet name like "Counts_per_100uL" or "Counts_per_mL"
+        """
+        if denominator == 1000:
+            base = "Counts_per_mL"
+        else:
+            base = f"Counts_per_{int(denominator)}uL"
+
+        return f"{base}_All" if include_all else base

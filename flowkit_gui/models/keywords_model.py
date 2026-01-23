@@ -8,10 +8,15 @@ This module provides:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 import pandas as pd
 
 from .workspace_model import Sample
+
+
+# Default system keywords to include in export
+# $VOL is included by default for volume normalization feature
+DEFAULT_ALLOWED_SYSTEM_KEYWORDS: Set[str] = {'$VOL'}
 
 
 class KeywordsModel:
@@ -21,11 +26,25 @@ class KeywordsModel:
     Supports two output formats:
     - Tidy: One row per keyword per sample (for pivot_wider in R)
     - Wide: One row per sample, keywords as columns (pivoted by Mouse/Organ)
+
+    Allows configurable inclusion of system keywords (e.g., $VOL, $DATE).
     """
 
-    def __init__(self):
+    def __init__(self, allowed_system_keywords: Optional[Set[str]] = None):
+        """
+        Initialize the KeywordsModel.
+
+        Args:
+            allowed_system_keywords: Set of system keyword names to include
+                                    in the export (e.g., {'$VOL', '$DATE'}).
+                                    If None, uses DEFAULT_ALLOWED_SYSTEM_KEYWORDS.
+        """
         self._samples: List[Sample] = []
         self._custom_keyword_names: List[str] = []
+        self._allowed_system_keywords: Set[str] = (
+            allowed_system_keywords if allowed_system_keywords is not None
+            else DEFAULT_ALLOWED_SYSTEM_KEYWORDS.copy()
+        )
 
     def set_samples(self, samples: List[Sample]) -> None:
         """
@@ -41,7 +60,9 @@ class KeywordsModel:
         """Extract unique custom keyword names across all samples."""
         keyword_set = set()
         for sample in self._samples:
-            custom = sample.get_custom_keywords()
+            custom = sample.get_custom_keywords(
+                include_system_keywords=self._allowed_system_keywords
+            )
             keyword_set.update(custom.keys())
 
         self._custom_keyword_names = sorted(list(keyword_set))
@@ -73,7 +94,9 @@ class KeywordsModel:
         rows = []
 
         for sample in self._samples:
-            custom = sample.get_custom_keywords()
+            custom = sample.get_custom_keywords(
+                include_system_keywords=self._allowed_system_keywords
+            )
             # Sort keyword names for consistent ordering across samples
             for kw_name in sorted(custom.keys()):
                 # Filter by selected keywords if specified
@@ -126,7 +149,9 @@ class KeywordsModel:
 
         rows = []
         for sample in self._samples:
-            custom = sample.get_custom_keywords()
+            custom = sample.get_custom_keywords(
+                include_system_keywords=self._allowed_system_keywords
+            )
             row = {
                 'sample_id': sample.sample_id,
                 'sample_name': sample.name,
@@ -176,7 +201,9 @@ class KeywordsModel:
         """
         for sample in self._samples:
             if sample.sample_id == sample_id:
-                return sample.get_custom_keywords()
+                return sample.get_custom_keywords(
+                    include_system_keywords=self._allowed_system_keywords
+                )
         return {}
 
     def get_keyword_values(self, keyword_name: str) -> List[str]:
@@ -191,8 +218,30 @@ class KeywordsModel:
         """
         values = set()
         for sample in self._samples:
-            custom = sample.get_custom_keywords()
+            custom = sample.get_custom_keywords(
+                include_system_keywords=self._allowed_system_keywords
+            )
             if keyword_name in custom and custom[keyword_name]:
                 values.add(str(custom[keyword_name]))
 
         return sorted(list(values))
+
+    @property
+    def allowed_system_keywords(self) -> Set[str]:
+        """Returns the set of allowed system keywords."""
+        return self._allowed_system_keywords.copy()
+
+    def set_allowed_system_keywords(self, keywords: Set[str]) -> None:
+        """
+        Update the set of allowed system keywords.
+
+        After calling this, you should call set_samples() again to refresh
+        the keyword names list.
+
+        Args:
+            keywords: New set of system keywords to include
+        """
+        self._allowed_system_keywords = keywords.copy()
+        # Re-extract keyword names with new settings
+        if self._samples:
+            self._extract_keyword_names()
