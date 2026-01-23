@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor
 
-from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo
+from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample
 from ..models.gate_tree_model import GateTreeModel, Gate
 from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric
@@ -715,6 +715,18 @@ class MainWindow(QMainWindow):
         expand_btn_layout.addStretch()
         sample_selection_layout.addLayout(expand_btn_layout)
 
+        # Load Selected Samples button (for two-phase loading)
+        self._load_selected_btn = AnimatedButton("  Load Selected Samples", primary=True)
+        self._load_selected_btn.setIcon(get_icon("sparkles-arrow"))
+        self._load_selected_btn.setToolTip(
+            "Load FCS data for selected samples only.\n"
+            "This saves memory when working with large workspaces."
+        )
+        self._load_selected_btn.clicked.connect(self._on_load_selected_samples)
+        self._load_selected_btn.setVisible(False)  # Hidden until metadata loaded
+        self._load_selected_btn.setEnabled(False)
+        sample_selection_layout.addWidget(self._load_selected_btn)
+
         # Compensation status warning banner (hidden by default)
         self._comp_warning_banner = QLabel()
         self._comp_warning_banner.setWordWrap(True)
@@ -1031,6 +1043,9 @@ class MainWindow(QMainWindow):
 
     def _on_open_wsp(self):
         """Handle Open WSP action."""
+        # Threshold for two-phase loading (samples)
+        TWO_PHASE_THRESHOLD = 30
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open FlowJo Workspace",
@@ -1064,9 +1079,30 @@ class MainWindow(QMainWindow):
             if not fcs_dir:
                 fcs_dir = str(Path(file_path).parent)
             logger.info(f"Using manual FCS directory: {fcs_dir}")
+            # Convert directory to file list for two-phase loading
+            fcs_dir_path = Path(fcs_dir)
+            fcs_files = [str(f) for f in fcs_dir_path.glob("*.fcs")]
+            fcs_files.extend([str(f) for f in fcs_dir_path.glob("*.FCS")])
 
         logger.info(f"Loading workspace: {file_path}")
 
+        # First, do a quick metadata-only parse to check sample count
+        try:
+            wsp_metadata = self._workspace_model.load_metadata_only(file_path)
+            sample_count = len(wsp_metadata.samples)
+            logger.info(f"WSP has {sample_count} samples (threshold: {TWO_PHASE_THRESHOLD})")
+
+            if sample_count > TWO_PHASE_THRESHOLD:
+                # Large workspace: use two-phase loading
+                logger.info("Using two-phase loading for large workspace")
+                self._finalize_metadata_only_load(wsp_metadata, fcs_files or [])
+                return
+
+        except Exception as e:
+            logger.warning(f"Metadata-only parsing failed, falling back to standard load: {e}")
+            # Fall through to standard loading
+
+        # Standard loading for smaller workspaces
         # Create and show loading dialog
         self._loading_dialog = LoadingDialog(self)
 
@@ -1074,7 +1110,7 @@ class MainWindow(QMainWindow):
         self._loader_worker = WorkspaceLoaderWorker(
             self._workspace_model,
             file_path,
-            fcs_dir=fcs_dir,
+            fcs_dir=fcs_dir if not fcs_files else None,
             fcs_files=fcs_files
         )
 
@@ -1115,6 +1151,159 @@ class MainWindow(QMainWindow):
             )
             self._statusbar.showMessage("Error loading workspace")
 
+    def _on_load_selected_samples(self):
+        """Handle Load Selected Samples button click (Phase 2 of two-phase loading)."""
+        if not hasattr(self, '_pending_fcs_files') or not self._pending_fcs_files:
+            QMessageBox.warning(
+                self,
+                "No FCS Files",
+                "FCS file list not available. Please reload the workspace."
+            )
+            return
+
+        selected_sample_ids = self._sample_selection_model.get_selected_sample_ids()
+        if not selected_sample_ids:
+            QMessageBox.warning(
+                self,
+                "No Samples Selected",
+                "Please select at least one sample to load."
+            )
+            return
+
+        logger.info(f"Loading {len(selected_sample_ids)} selected samples...")
+
+        # Show loading dialog
+        loading_dialog = LoadingDialog(self)
+        loading_dialog.set_status(f"Loading {len(selected_sample_ids)} samples...")
+
+        try:
+            # Load FCS data for selected samples only
+            num_samples, num_gates = self._workspace_model.load_selected_fcs(
+                selected_sample_ids=selected_sample_ids,
+                fcs_files=self._pending_fcs_files,
+                ignore_missing=True
+            )
+
+            loading_dialog.set_status("Applying compensation...")
+            QApplication.processEvents()
+
+            # Apply compensation to loaded samples
+            comp_results = self._workspace_model.apply_compensation_to_samples()
+
+            loading_dialog.accept()
+
+            # Update UI with full data
+            self._finalize_workspace_load_phase2()
+
+            # Hide the load button since we're done
+            self._load_selected_btn.setVisible(False)
+
+            # Show success message
+            failed_comp = [s for s, status in comp_results.items() if status == 'error']
+            msg = f"Loaded {num_samples} samples with {num_gates} gates."
+            if failed_comp:
+                msg += f"\n\nCompensation failed for {len(failed_comp)} sample(s)."
+
+            QMessageBox.information(self, "Samples Loaded", msg)
+            self._statusbar.showMessage(f"Loaded {num_samples} samples")
+
+        except Exception as e:
+            loading_dialog.accept()
+            logger.error(f"Failed to load selected samples: {type(e).__name__}: {e}")
+            QMessageBox.critical(
+                self,
+                "Loading Error",
+                f"Failed to load selected samples:\n{str(e)}"
+            )
+
+    def _finalize_workspace_load_phase2(self):
+        """Finalize UI after Phase 2 loading (FCS data now available)."""
+        # Re-populate UI components that need FCS data
+        self._keywords_model.set_samples(self._workspace_model.samples)
+        self._populate_sample_combo()
+        self._populate_marker_checkboxes()
+        self._populate_gate_marker_matrix()
+        self._populate_index_columns_list()
+        self._populate_keyword_selection()
+        self._populate_compensation_matrices()
+
+        # Update sample selection with actual event counts
+        self._update_sample_selection_with_fcs_data()
+
+        # Update gate statistics for first sample
+        if self._sample_combo.count() > 0:
+            self._on_sample_changed(0)
+
+        self._update_ui_state()
+
+    def _update_sample_selection_with_fcs_data(self):
+        """Update sample selection tree with actual event counts from FCS data."""
+        # Build a map of sample_id -> event_count from loaded samples
+        event_counts = {
+            sample.sample_id: sample.event_count
+            for sample in self._workspace_model.samples
+        }
+
+        # Update the sample selection model's event counts
+        self._sample_selection_model.update_event_counts(event_counts)
+
+    def _finalize_metadata_only_load(self, wsp_metadata, fcs_files: List[str]):
+        """Finalize UI after Phase 1 metadata-only loading."""
+        # Store FCS files for Phase 2
+        self._pending_fcs_files = fcs_files
+
+        # Get groups from metadata
+        groups = self._workspace_model.get_metadata_groups()
+
+        # Create Sample objects from metadata for UI population
+        metadata_samples = [
+            Sample(
+                sample_id=meta.sample_id,
+                name=meta.name,
+                fcs_path=Path(meta.fcs_path) if meta.fcs_path else None,
+                group="",
+                keywords={},
+                event_count=meta.event_count or -1  # -1 indicates "unknown"
+            )
+            for meta in wsp_metadata.samples.values()
+        ]
+
+        # Populate sample selection from metadata (shows "?" for unknown event counts)
+        self._sample_selection_model.populate_from_metadata(
+            groups=groups,
+            samples=metadata_samples,
+            default_selected=True
+        )
+        self._sample_selection_tree.expandAll()
+        self._update_sample_selection_header()
+
+        # Show the "Load Selected Samples" button
+        self._load_selected_btn.setVisible(True)
+        self._load_selected_btn.setEnabled(True)
+
+        # Populate gate tree from metadata (limited info)
+        self._populate_gate_tree()
+        self._gate_tree_view.expandAll()
+
+        # Update status
+        self._statusbar.showMessage(
+            f"Metadata loaded: {len(wsp_metadata.samples)} samples. "
+            f"Select samples and click 'Load Selected Samples'."
+        )
+
+        # Show info dialog
+        QMessageBox.information(
+            self,
+            "Workspace Preview",
+            f"Workspace metadata loaded:\n"
+            f"- {len(wsp_metadata.samples)} samples found\n"
+            f"- {len(wsp_metadata.groups)} groups\n"
+            f"- {len(wsp_metadata.gates)} gates\n\n"
+            f"Select the samples you need, then click 'Load Selected Samples' "
+            f"to load the FCS data.\n\n"
+            f"This saves memory when working with large workspaces."
+        )
+
     def _finalize_workspace_load(self):
         """Finalize UI after successful workspace load."""
         num_samples = self._pending_num_samples
@@ -1148,6 +1337,24 @@ class MainWindow(QMainWindow):
             progress_callback=update_progress
         )
         progress.close()
+
+        # Apply compensation matrices to samples that have them assigned
+        self._statusbar.showMessage("Applying compensation matrices...")
+        comp_results = self._workspace_model.apply_compensation_to_samples()
+
+        # Log any failures
+        failed_samples = [s for s, status in comp_results.items() if status == 'error']
+        if failed_samples:
+            logger.warning(f"Compensation failed for {len(failed_samples)} samples: {failed_samples[:5]}...")
+            # Show warning if significant number failed
+            if len(failed_samples) > 0:
+                QMessageBox.warning(
+                    self,
+                    "Compensation Warning",
+                    f"Compensation could not be applied to {len(failed_samples)} sample(s).\n\n"
+                    f"These samples will not work with 'Force Compensated' mode.\n"
+                    f"Use 'Auto' mode to fall back to raw data for these samples."
+                )
 
         # Get compensation assignments with colors for UI display
         comp_assignments = self._workspace_model.compensation_assignments
@@ -1946,6 +2153,17 @@ class MainWindow(QMainWindow):
                 self,
                 "Export Cancelled",
                 "Export was cancelled."
+            )
+        except CompensationError as e:
+            logger.error(f"Export failed due to compensation error: {e}")
+            QMessageBox.critical(
+                self,
+                "Compensation Error",
+                f"Export failed: {str(e)}\n\n"
+                f"Options:\n"
+                f"1. Fix compensation assignments in FlowJo\n"
+                f"2. Switch to 'Auto' mode to fall back to raw data\n"
+                f"3. Switch to 'Force Raw' mode to use uncompensated data"
             )
         except Exception as e:
             logger.error(f"Export failed: {type(e).__name__}: {e}")

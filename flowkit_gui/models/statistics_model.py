@@ -21,6 +21,7 @@ from ..utils.mfi_calculations import (
 )
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
+from ..utils.timing import timed_operation
 
 logger = get_logger("statistics_model")
 
@@ -122,41 +123,46 @@ class StatisticsModel:
         samples_with_errors = 0
         successful_calcs = 0
 
-        for sample_idx, sample in enumerate(samples):
-            # Check for cancellation at each sample boundary
-            if cancellation_token:
-                cancellation_token.check_cancelled()
+        # Context for timing
+        context = f"{len(samples)} samples, {len(gate_ids)} gates, {len(channels)} channels"
 
-            sample_id = sample.sample_id
-            self._statistics[sample_id] = {}
+        with timed_operation("Statistics calculation", context):
+            for sample_idx, sample in enumerate(samples):
+                # Check for cancellation at each sample boundary
+                if cancellation_token:
+                    cancellation_token.check_cancelled()
 
-            # Report sample progress
-            if status_callback:
-                status_callback(f"Processing sample {sample_idx + 1}/{len(samples)}: {sample.name}")
+                sample_id = sample.sample_id
+                self._statistics[sample_id] = {}
 
-            # Check if sample has FCS data
-            if not self._workspace.has_fcs_data(sample_id):
-                logger.warning(f"Sample '{sample_id}' has no FCS data - skipping MFI calculations")
-                self._warnings.append(f"Sample '{sample.name}': No FCS data available")
+                # Report sample progress
+                if status_callback:
+                    status_callback(f"Processing sample {sample_idx + 1}/{len(samples)}: {sample.name}")
 
-            for gate_id in gate_ids:
-                # Get gate statistics
-                stats = self._calculate_gate_stats(sample_id, gate_id, channels, metrics)
-                self._statistics[sample_id][gate_id] = stats
+                # Check if sample has FCS data
+                if not self._workspace.has_fcs_data(sample_id):
+                    logger.warning(f"Sample '{sample_id}' has no FCS data - skipping MFI calculations")
+                    self._warnings.append(f"Sample '{sample.name}': No FCS data available")
 
-                if stats.error_message:
-                    samples_with_errors += 1
-                elif stats.mfi_values:
-                    successful_calcs += 1
+                for gate_id in gate_ids:
+                    # Get gate statistics
+                    stats = self._calculate_gate_stats(sample_id, gate_id, channels, metrics)
+                    self._statistics[sample_id][gate_id] = stats
 
-                current += 1
-                if progress_callback:
-                    progress_callback(current, total_work)
+                    if stats.error_message:
+                        samples_with_errors += 1
+                    elif stats.mfi_values:
+                        successful_calcs += 1
 
-            # Periodic garbage collection to prevent memory accumulation
-            # DataFrames created for each sample/gate combo can accumulate without cleanup
-            if (sample_idx + 1) % 10 == 0:
-                gc.collect()
+                    current += 1
+                    if progress_callback:
+                        progress_callback(current, total_work)
+
+                # Periodic garbage collection and progress logging
+                # DataFrames created for each sample/gate combo can accumulate without cleanup
+                if (sample_idx + 1) % 10 == 0:
+                    gc.collect()
+                    logger.info(f"  Processed {sample_idx + 1}/{len(samples)} samples")
 
         logger.info(f"Statistics calculation complete: {successful_calcs} successful, {samples_with_errors} with errors")
 

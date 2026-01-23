@@ -26,6 +26,7 @@ import numpy as np
 from ..utils.logging_config import get_logger
 from ..utils.cache import MemoryBoundedLRUCache
 from ..utils.cancellation import CancellationToken, CancellationError
+from .wsp_metadata_parser import WSPMetadataParser, WSPMetadata
 from ..config import (
     SYSTEM_KEYWORD_PREFIXES,
     SYSTEM_KEYWORD_EXACT,
@@ -34,6 +35,11 @@ from ..config import (
 )
 
 logger = get_logger("workspace_model")
+
+
+class CompensationError(Exception):
+    """Raised when required compensation cannot be applied or is missing."""
+    pass
 
 
 def _extract_dimension_id(dim_str: str) -> str:
@@ -197,6 +203,11 @@ class WorkspaceModel:
         )
         # Track which samples have been analyzed (for on-demand analysis)
         self._analyzed_samples: Set[str] = set()
+        # Track which samples have had compensation applied
+        self._samples_with_compensation_applied: Set[str] = set()
+        # Two-phase loading state
+        self._metadata_only: bool = False
+        self._wsp_metadata: Optional[WSPMetadata] = None
         logger.info(
             f"Initialized caches: event={self._event_cache.memory_limit_mb:.0f}MB, "
             f"membership={self._membership_cache.memory_limit_mb:.0f}MB"
@@ -251,6 +262,89 @@ class WorkspaceModel:
                 f"(events={event_count}, membership={membership_count}, "
                 f"prior evictions: events={event_evictions}, membership={membership_evictions})"
             )
+
+    def get_cache_stats(self) -> Dict[str, float]:
+        """
+        Get current cache memory usage statistics.
+
+        Returns:
+            Dict with 'event' and 'membership' keys containing memory usage in MB
+        """
+        return {
+            'event': self._event_cache.memory_usage_mb,
+            'membership': self._membership_cache.memory_usage_mb,
+        }
+
+    def apply_compensation_to_samples(
+        self,
+        sample_ids: Optional[List[str]] = None
+    ) -> Dict[str, str]:
+        """
+        Apply compensation matrices to samples.
+
+        This method applies the compensation matrix assigned to each sample
+        in FlowJo. After calling this, compensated event data can be retrieved
+        using get_gated_events() with DataSource.COMP.
+
+        Args:
+            sample_ids: Optional list of sample IDs to process (default: all samples)
+
+        Returns:
+            Dict mapping sample_id to status:
+            - 'applied': Compensation matrix applied successfully
+            - 'none': No compensation assigned (valid for spectral/unmixed data)
+            - 'error': Compensation application failed
+        """
+        results: Dict[str, str] = {}
+
+        if not self._workspace:
+            logger.warning("apply_compensation_to_samples called but workspace not loaded")
+            return results
+
+        target_sample_ids = sample_ids if sample_ids else [s.sample_id for s in self._samples]
+
+        logger.info(f"Applying compensation to {len(target_sample_ids)} samples...")
+
+        applied_count = 0
+        none_count = 0
+        error_count = 0
+
+        for sample_id in target_sample_ids:
+            try:
+                # Try to get the compensation matrix for this sample
+                # FlowKit's get_comp_matrix returns the matrix assigned in the WSP
+                matrix = None
+                if hasattr(self._workspace, 'get_comp_matrix'):
+                    try:
+                        matrix = self._workspace.get_comp_matrix(sample_id)
+                    except Exception as e:
+                        logger.debug(f"get_comp_matrix failed for {sample_id}: {e}")
+
+                if matrix is not None:
+                    # Apply compensation to the sample
+                    sample = self._workspace.get_sample(sample_id)
+                    sample.apply_compensation(matrix)
+                    self._samples_with_compensation_applied.add(sample_id)
+                    results[sample_id] = 'applied'
+                    applied_count += 1
+                    logger.debug(f"Applied compensation to sample {sample_id}")
+                else:
+                    # No compensation matrix assigned - valid for unmixed/spectral data
+                    results[sample_id] = 'none'
+                    none_count += 1
+                    logger.debug(f"No compensation matrix for sample {sample_id}")
+
+            except Exception as e:
+                results[sample_id] = 'error'
+                error_count += 1
+                logger.error(f"Failed to apply compensation to {sample_id}: {type(e).__name__}: {e}")
+
+        logger.info(
+            f"Compensation application complete: {applied_count} applied, "
+            f"{none_count} no matrix, {error_count} errors"
+        )
+
+        return results
 
     def _ensure_sample_analyzed(self, sample_id: str) -> None:
         """Ensure a sample has been analyzed (on-demand analysis).
@@ -451,6 +545,171 @@ class WorkspaceModel:
         self._extract_channels()
 
         return len(self._samples), len(self._gates)
+
+    @property
+    def has_fcs_loaded(self) -> bool:
+        """
+        Check if FCS data is loaded (not just metadata).
+
+        Returns:
+            True if FCS data is loaded and available for analysis,
+            False if only metadata is loaded or nothing is loaded.
+        """
+        return self._workspace is not None and not self._metadata_only
+
+    def load_metadata_only(self, wsp_path: str) -> WSPMetadata:
+        """
+        Phase 1: Parse WSP XML to extract metadata without loading FCS files.
+
+        This enables fast workspace preview for large datasets (70+ samples)
+        by parsing only the XML structure. Users can then select which samples
+        to load in Phase 2.
+
+        Args:
+            wsp_path: Path to the WSP file
+
+        Returns:
+            WSPMetadata containing samples, groups, gates, and compensation info
+
+        Raises:
+            FileNotFoundError: If WSP file doesn't exist
+        """
+        self._wsp_path = Path(wsp_path)
+        if not self._wsp_path.exists():
+            raise FileNotFoundError(f"WSP file not found: {wsp_path}")
+
+        # Clear any previous state
+        self.clear_cache()
+        self._workspace = None
+        self._metadata_only = True
+        self._samples_with_compensation_applied.clear()
+
+        logger.info(f"Phase 1: Parsing WSP metadata only: {self._wsp_path.name}")
+
+        # Parse WSP metadata
+        parser = WSPMetadataParser()
+        self._wsp_metadata = parser.parse(wsp_path)
+
+        # Populate internal sample list from metadata (without FCS data)
+        self._samples = []
+        for sample_id, meta in self._wsp_metadata.samples.items():
+            self._samples.append(Sample(
+                sample_id=meta.sample_id,
+                name=meta.name,
+                fcs_path=Path(meta.fcs_path) if meta.fcs_path else None,
+                group="",  # Groups handled separately
+                keywords={},  # Keywords not available without FCS
+                event_count=meta.event_count or 0  # May have count from WSP
+            ))
+
+        # Populate gates from metadata
+        self._gates = []
+        for gate_meta in self._wsp_metadata.gates:
+            self._gates.append(GateInfo(
+                gate_id=gate_meta.gate_id,
+                name=gate_meta.name,
+                path=gate_meta.path,
+                gate_type=gate_meta.gate_type,
+                parameters=[]  # Parameters require FCS data
+            ))
+
+        logger.info(
+            f"Metadata loaded: {len(self._samples)} samples, "
+            f"{len(self._wsp_metadata.groups)} groups, {len(self._gates)} gates"
+        )
+
+        return self._wsp_metadata
+
+    def load_selected_fcs(
+        self,
+        selected_sample_ids: List[str],
+        fcs_files: List[str],
+        ignore_missing: bool = True
+    ) -> Tuple[int, int]:
+        """
+        Phase 2: Load FCS data for selected samples only.
+
+        After Phase 1 (load_metadata_only), call this method to load FCS data
+        for the user-selected samples. This avoids loading all 70+ samples
+        when only 14 are needed.
+
+        Args:
+            selected_sample_ids: List of sample IDs to load (from metadata)
+            fcs_files: List of FCS file paths to search for matching files
+            ignore_missing: If True, continue even if some FCS files are missing
+
+        Returns:
+            Tuple of (number of samples loaded, number of gates found)
+
+        Raises:
+            ValueError: If load_metadata_only was not called first
+        """
+        if self._wsp_path is None:
+            raise ValueError("load_metadata_only must be called before load_selected_fcs")
+
+        logger.info(
+            f"Phase 2: Loading FCS data for {len(selected_sample_ids)} of "
+            f"{len(self._wsp_metadata.samples) if self._wsp_metadata else '?'} samples"
+        )
+
+        # Filter FCS files to only those matching selected samples
+        selected_set = set(selected_sample_ids)
+        filtered_fcs_files = []
+
+        for fcs_path in fcs_files:
+            fcs_name = Path(fcs_path).name
+            # FlowKit uses filename as sample_id
+            if fcs_name in selected_set:
+                filtered_fcs_files.append(fcs_path)
+                logger.debug(f"Including FCS file: {fcs_name}")
+
+        if not filtered_fcs_files:
+            logger.warning("No matching FCS files found for selected samples")
+            # Try with all FCS files as fallback
+            filtered_fcs_files = fcs_files
+            logger.info(f"Fallback: using all {len(fcs_files)} FCS files")
+
+        logger.info(f"Loading {len(filtered_fcs_files)} FCS files for selected samples")
+
+        # Create FlowKit workspace with only selected FCS files
+        self._workspace = fk.Workspace(
+            str(self._wsp_path),
+            fcs_samples=filtered_fcs_files,
+            find_fcs_files_from_wsp=False
+        )
+
+        # Clear metadata-only mode
+        self._metadata_only = False
+
+        # Re-extract samples from FlowKit (now with FCS data)
+        self._extract_samples()
+
+        # Re-extract gates (now with full info)
+        self._extract_gates()
+
+        # Extract channels
+        self._extract_channels()
+
+        logger.info(
+            f"Phase 2 complete: {len(self._samples)} samples loaded, "
+            f"{len(self._gates)} gates found"
+        )
+
+        return len(self._samples), len(self._gates)
+
+    def get_metadata_groups(self) -> Dict[str, List[str]]:
+        """
+        Get sample groups from metadata (available in Phase 1).
+
+        Returns:
+            Dict mapping group name to list of sample IDs
+        """
+        if self._wsp_metadata is None:
+            return {}
+        return {
+            name: group.sample_ids
+            for name, group in self._wsp_metadata.groups.items()
+        }
 
     def _extract_samples(self) -> None:
         """Extract sample information from the loaded workspace."""
@@ -1107,6 +1366,21 @@ class WorkspaceModel:
             # This reduces memory usage significantly for MFI calculations
             if channels and data_source in (DataSource.RAW, DataSource.COMP):
                 source = 'raw' if data_source == DataSource.RAW else 'comp'
+
+                # For COMP mode with selective loading, verify compensation was applied
+                if data_source == DataSource.COMP and sample_id not in self._samples_with_compensation_applied:
+                    comp_status = self._compensation_status.get(sample_id) if hasattr(self, '_compensation_status') else None
+                    if comp_status == 'none':
+                        raise CompensationError(
+                            f"Compensated data requested but sample '{sample_id}' has no compensation "
+                            f"assigned in FlowJo (unmixed/spectral data). Use 'Auto' mode instead."
+                        )
+                    else:
+                        raise CompensationError(
+                            f"Compensated data requested but compensation not applied to sample '{sample_id}'. "
+                            f"Check compensation matrix assignment in FlowJo."
+                        )
+
                 logger.debug(f"Using selective channel loading for {len(channels)} channels")
                 try:
                     events, columns = self._get_cached_events_selective(
@@ -1135,7 +1409,20 @@ class WorkspaceModel:
                 source_used = 'raw'
 
             elif data_source == DataSource.COMP:
-                # Force compensated data (cached)
+                # Force compensated data - fail if compensation wasn't applied
+                if sample_id not in self._samples_with_compensation_applied:
+                    # Check if sample has compensation status from WSP
+                    comp_status = self._compensation_status.get(sample_id) if hasattr(self, '_compensation_status') else None
+                    if comp_status == 'none':
+                        raise CompensationError(
+                            f"Compensated data requested but sample '{sample_id}' has no compensation "
+                            f"assigned in FlowJo (unmixed/spectral data). Use 'Auto' mode instead."
+                        )
+                    else:
+                        raise CompensationError(
+                            f"Compensated data requested but compensation not applied to sample '{sample_id}'. "
+                            f"Check compensation matrix assignment in FlowJo."
+                        )
                 logger.debug("Using COMP (compensated) data as requested")
                 events = self._get_cached_events(sample_id, 'comp')
                 source_used = 'comp'

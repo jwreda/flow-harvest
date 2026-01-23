@@ -22,6 +22,7 @@ from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric, FrequencyDataType
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
+from ..utils.timing import PipelineTimer
 
 logger = get_logger("xlsx_exporter")
 
@@ -122,6 +123,10 @@ class XLSXExporter:
         self._warnings.clear()
         wb = Workbook()
 
+        # Initialize pipeline timer for performance monitoring
+        timer = PipelineTimer("Excel Export")
+        timer.start()
+
         logger.info(f"Starting export to {filepath}")
         logger.debug(f"Data source: {self._data_source.value}")
 
@@ -158,9 +163,10 @@ class XLSXExporter:
         # Sheet 1: Gating Strategy
         if status_callback:
             status_callback("Writing Gating_Strategy sheet...")
-        ws_gates = wb.active
-        ws_gates.title = "Gating_Strategy"
-        self._write_gating_strategy(ws_gates)
+        with timer.step("Write gating strategy"):
+            ws_gates = wb.active
+            ws_gates.title = "Gating_Strategy"
+            self._write_gating_strategy(ws_gates)
         current_step += 1
         if progress_callback:
             progress_callback(current_step, total_steps)
@@ -168,8 +174,9 @@ class XLSXExporter:
         # Sheet 2: Keywords (Tidy)
         if status_callback:
             status_callback("Writing Keywords sheet...")
-        ws_keywords = wb.create_sheet("Keywords")
-        self._write_keywords_tidy(ws_keywords)
+        with timer.step("Write keywords sheet"):
+            ws_keywords = wb.create_sheet("Keywords")
+            self._write_keywords_tidy(ws_keywords)
         current_step += 1
         if progress_callback:
             progress_callback(current_step, total_steps)
@@ -204,14 +211,15 @@ class XLSXExporter:
             status_callback("Calculating statistics...")
         stats_model = StatisticsModel(self._workspace, data_source=self._data_source)
         if all_markers_combined:
-            stats_model.calculate_statistics(
-                self._gate_ids,
-                all_markers_combined,
-                self._mfi_metrics,
-                sample_ids=self._selected_sample_ids,  # Filter by selected samples
-                status_callback=status_callback,
-                cancellation_token=cancellation_token
-            )
+            with timer.step("Calculate statistics"):
+                stats_model.calculate_statistics(
+                    self._gate_ids,
+                    all_markers_combined,
+                    self._mfi_metrics,
+                    sample_ids=self._selected_sample_ids,  # Filter by selected samples
+                    status_callback=status_callback,
+                    cancellation_token=cancellation_token
+                )
             calc_warnings = stats_model.get_warnings()
             if calc_warnings:
                 self._warnings.extend(calc_warnings)
@@ -463,7 +471,13 @@ class XLSXExporter:
         # Save workbook
         if status_callback:
             status_callback("Saving Excel file...")
-        wb.save(filepath)
+        with timer.step("Save workbook"):
+            wb.save(filepath)
+
+        # Log timing summary with cache stats
+        cache_stats = self._workspace.get_cache_stats() if hasattr(self._workspace, 'get_cache_stats') else None
+        timer.summary(cache_stats=cache_stats)
+
         logger.info(f"Export saved to {filepath}")
 
     def get_warnings(self) -> List[str]:

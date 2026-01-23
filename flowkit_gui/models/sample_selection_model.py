@@ -7,7 +7,7 @@ This module provides:
 - Compensation status indicators
 """
 
-from typing import Dict, List, Optional, Set, Any
+from typing import Dict, List, Optional, Set, Any, TYPE_CHECKING
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor, QIcon
 
@@ -473,3 +473,150 @@ class SampleSelectionModel(QStandardItemModel):
     def _update_status_item_display(self, status_item: QStandardItem, sample_id: str) -> None:
         """Update a status item's display based on compensation info."""
         self._apply_compensation_display(status_item, sample_id)
+
+    def populate_from_metadata(
+        self,
+        groups: Dict[str, List[str]],
+        samples: List[Sample],
+        default_selected: bool = True
+    ) -> None:
+        """
+        Populate the model from metadata (without full FCS data).
+
+        This is used in Phase 1 of two-phase loading when only WSP metadata
+        is available. Event counts may be unknown (shown as "?").
+
+        Args:
+            groups: Dict mapping group name to list of sample IDs
+            samples: List of Sample objects (may have event_count=-1 for unknown)
+            default_selected: Whether samples are selected by default
+        """
+        self.clear_samples()
+        self._updating = True
+
+        # Store sample info
+        for sample in samples:
+            self._samples[sample.sample_id] = sample
+            self._selection_state[sample.sample_id] = default_selected
+
+        # Track which samples are in groups
+        samples_in_groups: Set[str] = set()
+
+        # Create group nodes with sample children
+        for group_name, sample_ids in sorted(groups.items()):
+            group_item = self._create_group_item(group_name, len(sample_ids))
+            self._group_items[group_name] = group_item
+
+            for sample_id in sample_ids:
+                samples_in_groups.add(sample_id)
+                if sample_id in self._samples:
+                    sample = self._samples[sample_id]
+                    self._add_sample_to_group_metadata(sample, group_item)
+
+            self.appendRow([group_item, QStandardItem(), QStandardItem()])
+
+        # Create "Ungrouped" section for samples not in any group
+        ungrouped_samples = [
+            s for s in samples
+            if s.sample_id not in samples_in_groups
+        ]
+        if ungrouped_samples:
+            ungrouped_item = self._create_group_item("Ungrouped", len(ungrouped_samples))
+            self._group_items["Ungrouped"] = ungrouped_item
+
+            for sample in ungrouped_samples:
+                self._add_sample_to_group_metadata(sample, ungrouped_item)
+
+            self.appendRow([ungrouped_item, QStandardItem(), QStandardItem()])
+
+        # If no groups exist, show all samples as flat list
+        if not groups and not ungrouped_samples:
+            for sample in samples:
+                self._add_sample_to_root_metadata(sample)
+
+        self._updating = False
+
+        # Update all group tri-states
+        self._update_all_group_states()
+
+        logger.info(f"Populated sample selection from metadata: {len(samples)} samples in {len(groups)} groups")
+
+    def _add_sample_to_group_metadata(self, sample: Sample, group_item: QStandardItem) -> None:
+        """Add a sample as a child of a group item (metadata mode - may have unknown event count)."""
+        item = self._create_sample_item(sample)
+
+        # Track this item for sync
+        if sample.sample_id not in self._sample_items:
+            self._sample_items[sample.sample_id] = []
+        self._sample_items[sample.sample_id].append(item)
+
+        # Create event count column - show "?" if unknown (event_count < 0)
+        if sample.event_count < 0:
+            events_str = "?"
+        elif sample.event_count > 0:
+            events_str = f"{sample.event_count:,}"
+        else:
+            events_str = "No data"
+
+        events_item = QStandardItem(events_str)
+        events_item.setEditable(False)
+        events_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        if sample.event_count <= 0:
+            events_item.setForeground(QBrush(QColor("#888888")))
+
+        # Create compensation status column (may be incomplete in metadata mode)
+        status_item = self._create_compensation_status_item(sample.sample_id)
+
+        group_item.appendRow([item, events_item, status_item])
+
+    def _add_sample_to_root_metadata(self, sample: Sample) -> None:
+        """Add a sample directly to the root (metadata mode)."""
+        item = self._create_sample_item(sample)
+
+        if sample.sample_id not in self._sample_items:
+            self._sample_items[sample.sample_id] = []
+        self._sample_items[sample.sample_id].append(item)
+
+        # Event count column
+        if sample.event_count < 0:
+            events_str = "?"
+        elif sample.event_count > 0:
+            events_str = f"{sample.event_count:,}"
+        else:
+            events_str = "No data"
+
+        events_item = QStandardItem(events_str)
+        events_item.setEditable(False)
+        if sample.event_count <= 0:
+            events_item.setForeground(QBrush(QColor("#888888")))
+
+        status_item = self._create_compensation_status_item(sample.sample_id)
+
+        self.appendRow([item, events_item, status_item])
+
+    def update_event_counts(self, event_counts: Dict[str, int]) -> None:
+        """
+        Update event counts for samples after FCS data is loaded.
+
+        Args:
+            event_counts: Dict mapping sample_id to event count
+        """
+        for sample_id, items in self._sample_items.items():
+            if sample_id not in event_counts:
+                continue
+
+            count = event_counts[sample_id]
+
+            for item in items:
+                # Find the events column sibling
+                parent = item.parent()
+                if parent:
+                    row = item.row()
+                    events_item = parent.child(row, self.COLUMN_EVENTS)
+                    if events_item:
+                        if count > 0:
+                            events_item.setText(f"{count:,}")
+                            events_item.setForeground(QBrush(QColor("#000000")))
+                        else:
+                            events_item.setText("No data")
+                            events_item.setForeground(QBrush(QColor("#888888")))
