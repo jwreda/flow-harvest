@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import QStyledItemDelegate, QStyle
 from PyQt5.QtGui import QPainter, QColor
 from PyQt5.QtCore import Qt, QRect
 
+from ..utils.theme import get_colors
+
 
 class AccentedTreeItemDelegate(QStyledItemDelegate):
     """
@@ -15,10 +17,8 @@ class AccentedTreeItemDelegate(QStyledItemDelegate):
     providing a clear visual indicator of selection.
     """
 
-    # Colors from the Deep Rose palette
-    SELECTION_COLOR = "#FFDBE8"  # Rose Tint
+    # Accent color is the same in both themes
     ACCENT_COLOR = "#E91E8C"     # Deep Rose
-    HOVER_COLOR = "#FFF0F5"      # Light Blush
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,10 +31,15 @@ class AccentedTreeItemDelegate(QStyledItemDelegate):
         is_selected = option.state & QStyle.State_Selected
         is_hovered = option.state & QStyle.State_MouseOver
 
+        # Get theme-aware colors
+        colors = get_colors()
+        selection_color = colors["selection"]
+        hover_color = colors["hover"]
+
         # Draw background based on state
         if is_selected:
             # Selection background
-            painter.fillRect(option.rect, QColor(self.SELECTION_COLOR))
+            painter.fillRect(option.rect, QColor(selection_color))
 
             # 3px accent bar on left
             accent_rect = QRect(
@@ -47,7 +52,7 @@ class AccentedTreeItemDelegate(QStyledItemDelegate):
 
         elif is_hovered:
             # Hover background
-            painter.fillRect(option.rect, QColor(self.HOVER_COLOR))
+            painter.fillRect(option.rect, QColor(hover_color))
 
         painter.restore()
 

@@ -265,11 +265,11 @@ class StatisticsModel:
                 'sample_name': sample.name,
             }
 
-            # Add keywords if requested
+            # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name, kw_value in custom.items():
-                    row[kw_name] = str(kw_value) if kw_value else ''
+                for kw_name in sorted(custom.keys()):
+                    row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add gate statistics
             for gate_id in gate_ids:
@@ -343,11 +343,11 @@ class StatisticsModel:
                 'sample_name': sample.name,
             }
 
-            # Add keywords if requested
+            # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name, kw_value in custom.items():
-                    row[kw_name] = str(kw_value) if kw_value else ''
+                for kw_name in sorted(custom.keys()):
+                    row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add gate statistics (count, %parent, %total) if enabled
             for gate_id in gate_ids_for_stats:
@@ -441,11 +441,11 @@ class StatisticsModel:
                 'sample_name': sample.name,
             }
 
-            # Add keywords if requested
+            # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name, kw_value in custom.items():
-                    row[kw_name] = str(kw_value) if kw_value else ''
+                for kw_name in sorted(custom.keys()):
+                    row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add frequency data for each gate
             for gate_id in gate_ids:
@@ -491,12 +491,12 @@ class StatisticsModel:
             sample_id = sample.sample_id
             sample_name = sample.name
 
-            # Get keywords once per sample
+            # Get keywords once per sample (sorted alphabetically for consistent order)
             keywords = {}
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name, kw_value in custom.items():
-                    keywords[kw_name] = str(kw_value) if kw_value else ''
+                for kw_name in sorted(custom.keys()):
+                    keywords[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add a row for each gate
             for gate_id in gate_ids:
@@ -605,11 +605,11 @@ class StatisticsModel:
                     'sample_name': sample.name,
                 }
 
-                # Add keywords if requested
+                # Add keywords if requested (sorted alphabetically for consistent column order)
                 if include_keywords:
                     custom = sample.get_custom_keywords()
-                    for kw_name, kw_value in custom.items():
-                        row[kw_name] = str(kw_value) if kw_value else ''
+                    for kw_name in sorted(custom.keys()):
+                        row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
                 # Get reference gate count
                 try:
@@ -720,12 +720,12 @@ class StatisticsModel:
                 sample_id = sample.sample_id
                 sample_name = sample.name
 
-                # Get keywords once per sample
+                # Get keywords once per sample (sorted alphabetically for consistent order)
                 keywords = {}
                 if include_keywords:
                     custom = sample.get_custom_keywords()
-                    for kw_name, kw_value in custom.items():
-                        keywords[kw_name] = str(kw_value) if kw_value else ''
+                    for kw_name in sorted(custom.keys()):
+                        keywords[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
                 # Get reference gate count
                 try:

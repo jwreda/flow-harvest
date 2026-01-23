@@ -74,7 +74,8 @@ class KeywordsModel:
 
         for sample in self._samples:
             custom = sample.get_custom_keywords()
-            for kw_name, kw_value in custom.items():
+            # Sort keyword names for consistent ordering across samples
+            for kw_name in sorted(custom.keys()):
                 # Filter by selected keywords if specified
                 if selected_keywords is not None and kw_name not in selected_keywords:
                     continue
@@ -82,7 +83,7 @@ class KeywordsModel:
                     'sample_id': sample.sample_id,
                     'sample_name': sample.name,
                     'keyword_name': kw_name,
-                    'keyword_value': str(kw_value) if kw_value else ''
+                    'keyword_value': str(custom[kw_name]) if custom[kw_name] else ''
                 })
 
         return pd.DataFrame(rows)

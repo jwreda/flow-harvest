@@ -23,6 +23,8 @@ SYSTEM_KEYWORD_PREFIXES = (
 
 # Exact system keyword matches to filter out
 SYSTEM_KEYWORD_EXACT = {
+    # Unique identifiers (not user-meaningful)
+    'GUID',
     # FCS structure keywords
     'BEGINDATA', 'ENDDATA', 'BEGINANALYSIS', 'ENDANALYSIS',
     'BEGINSTEXT', 'ENDSTEXT', 'BEGINTEXT', 'ENDTEXT',

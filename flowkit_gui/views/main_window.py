@@ -554,6 +554,7 @@ class MainWindow(QMainWindow):
         self._gate_tree_view.setModel(self._gate_tree_model)
         self._gate_tree_view.setAlternatingRowColors(True)
         self._gate_tree_view.setAnimated(True)
+        self._gate_tree_view.setMouseTracking(True)
         self._gate_tree_view.header().setStretchLastSection(True)
 
         # Configure column widths for 4 columns:
@@ -665,6 +666,7 @@ class MainWindow(QMainWindow):
         self._sample_selection_tree.setModel(self._sample_selection_model)
         self._sample_selection_tree.setAlternatingRowColors(True)
         self._sample_selection_tree.setAnimated(True)
+        self._sample_selection_tree.setMouseTracking(True)
         self._sample_selection_tree.header().setStretchLastSection(True)
         self._sample_selection_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self._sample_selection_tree.clicked.connect(self._on_sample_tree_clicked)
@@ -692,6 +694,24 @@ class MainWindow(QMainWindow):
         sample_btn_layout.addWidget(invert_samples_btn)
 
         sample_selection_layout.addLayout(sample_btn_layout)
+
+        # Expand/collapse buttons row
+        expand_btn_layout = QHBoxLayout()
+
+        expand_all_btn = QPushButton("  Expand All")
+        expand_all_btn.setIcon(get_icon("chevron-down"))
+        expand_all_btn.setToolTip("Expand all groups")
+        expand_all_btn.clicked.connect(self._sample_selection_tree.expandAll)
+        expand_btn_layout.addWidget(expand_all_btn)
+
+        collapse_all_btn = QPushButton("  Collapse All")
+        collapse_all_btn.setIcon(get_icon("chevron-right"))
+        collapse_all_btn.setToolTip("Collapse all groups")
+        collapse_all_btn.clicked.connect(self._sample_selection_tree.collapseAll)
+        expand_btn_layout.addWidget(collapse_all_btn)
+
+        expand_btn_layout.addStretch()
+        sample_selection_layout.addLayout(expand_btn_layout)
 
         # Compensation status warning banner (hidden by default)
         self._comp_warning_banner = QLabel()

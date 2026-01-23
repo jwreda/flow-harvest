@@ -25,6 +25,15 @@ See [docs/unmixing-vs-compensation.md](docs/unmixing-vs-compensation.md) for ful
 
 ## Planned Enhancements
 
+### Session Configuration
+- [ ] Design portable config format (JSON) for session settings
+- [ ] Export button to save current selections to config file
+- [ ] Import button to load saved config files
+- [ ] Compatibility validation (workspace fingerprint matching)
+- [ ] Fuzzy matching for samples with changed paths/volume names
+- [ ] Graceful handling of new/removed gates and compensation matrices
+- [ ] User feedback on partial matches (what matched, what didn't)
+
 ### Matrix Interaction
 - [ ] Expandable tips/help overlay for matrix controls (hover "?" icon for full instructions)
 - [ ] Keyboard navigation in matrix (arrow keys to move, space to toggle)
