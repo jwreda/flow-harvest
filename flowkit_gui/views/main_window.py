@@ -562,7 +562,7 @@ class MainWindow(QMainWindow):
         # Column 2: Events count
         # Column 3: % Parent
         self._gate_tree_view.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._gate_tree_view.setColumnWidth(1, 40)   # Reference checkbox (narrow)
+        self._gate_tree_view.setColumnWidth(1, 28)   # Reference checkbox (narrow)
         self._gate_tree_view.setColumnWidth(2, 80)   # Events count
         self._gate_tree_view.setColumnWidth(3, 80)   # % Parent
 
