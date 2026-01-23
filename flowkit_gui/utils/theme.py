@@ -269,3 +269,17 @@ def get_current_mode() -> ThemeMode:
         ThemeMode enum value
     """
     return get_theme_manager().mode
+
+
+def is_dark_mode() -> bool:
+    """
+    Check if the current actual theme is dark mode.
+
+    This helper provides a simple boolean check for dark mode,
+    useful for widgets that need to adjust their appearance
+    based on the current theme.
+
+    Returns:
+        True if dark mode is active, False if light mode
+    """
+    return get_theme_manager().is_dark()

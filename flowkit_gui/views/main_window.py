@@ -39,7 +39,7 @@ from ..exporters.xlsx_exporter import XLSXExporter
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
 from ..utils.theme_manager import ThemeMode, get_theme_manager
-from ..utils.animations import AnimatedButton
+from ..utils.animations import AnimatedButton, SpecularHoverButton
 from ..utils.fcs_discovery import (
     discover_fcs_files, get_fcs_file_list, ProcessingLevel, DiscoveryResult
 )
@@ -87,7 +87,7 @@ class FCSDirectoryDialog(QDialog):
         info_label.setWordWrap(True)
         info_layout.addWidget(info_label, 1)  # Stretch factor 1
 
-        change_dir_btn = QPushButton()
+        change_dir_btn = SpecularHoverButton("", primary=False)
         change_dir_btn.setIcon(get_icon("folder-sparkle"))
         change_dir_btn.setToolTip("Change search directory")
         change_dir_btn.setFixedSize(32, 32)
@@ -372,12 +372,12 @@ class LoadingDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    """Main application window for FlowKit GUI."""
+    """Main application window for FlowJoe."""
 
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("FlowKit Analysis - Flow Cytometry Data Export")
+        self.setWindowTitle("FlowJoe - Flow Cytometry Data Export")
         self.setMinimumSize(1200, 800)
 
         # Models
@@ -479,7 +479,7 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        open_btn = QPushButton("  Open WSP")
+        open_btn = SpecularHoverButton("  Open WSP", primary=False)
         open_btn.setIcon(get_icon("folder-sparkle"))
         open_btn.clicked.connect(self._on_open_wsp)
         toolbar.addWidget(open_btn)
@@ -578,12 +578,12 @@ class MainWindow(QMainWindow):
 
         # Select all/none buttons
         btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("  Select All")
+        select_all_btn = SpecularHoverButton("  Select All", primary=False)
         select_all_btn.setIcon(get_icon("check-star"))
         select_all_btn.clicked.connect(self._on_select_all_gates)
         btn_layout.addWidget(select_all_btn)
 
-        deselect_all_btn = QPushButton("  Deselect All")
+        deselect_all_btn = SpecularHoverButton("  Deselect All", primary=False)
         deselect_all_btn.setIcon(get_icon("x-swoop"))
         deselect_all_btn.clicked.connect(self._on_deselect_all_gates)
         btn_layout.addWidget(deselect_all_btn)
@@ -591,7 +591,8 @@ class MainWindow(QMainWindow):
         btn_layout.addStretch()
 
         # Name toggle button (Full Names / Short Names)
-        self._gate_name_toggle_btn = QPushButton("Full Names")
+        self._gate_name_toggle_btn = SpecularHoverButton("  Full Names", primary=False)
+        self._gate_name_toggle_btn.setIcon(get_icon("text-toggle"))
         self._gate_name_toggle_btn.setCheckable(True)
         self._gate_name_toggle_btn.setChecked(True)
         self._gate_name_toggle_btn.setToolTip("Toggle between full names (with parent prefix for duplicates) and short names")
@@ -679,17 +680,18 @@ class MainWindow(QMainWindow):
 
         # Sample selection buttons
         sample_btn_layout = QHBoxLayout()
-        select_all_samples_btn = QPushButton("  Select All")
+        select_all_samples_btn = SpecularHoverButton("  Select All", primary=False)
         select_all_samples_btn.setIcon(get_icon("check-star"))
         select_all_samples_btn.clicked.connect(self._on_select_all_samples)
         sample_btn_layout.addWidget(select_all_samples_btn)
 
-        deselect_all_samples_btn = QPushButton("  Deselect All")
+        deselect_all_samples_btn = SpecularHoverButton("  Deselect All", primary=False)
         deselect_all_samples_btn.setIcon(get_icon("x-swoop"))
         deselect_all_samples_btn.clicked.connect(self._on_deselect_all_samples)
         sample_btn_layout.addWidget(deselect_all_samples_btn)
 
-        invert_samples_btn = QPushButton("  Invert")
+        invert_samples_btn = SpecularHoverButton("  Invert", primary=False)
+        invert_samples_btn.setIcon(get_icon("invert-arrows"))
         invert_samples_btn.clicked.connect(self._on_invert_samples)
         sample_btn_layout.addWidget(invert_samples_btn)
 
@@ -698,13 +700,13 @@ class MainWindow(QMainWindow):
         # Expand/collapse buttons row
         expand_btn_layout = QHBoxLayout()
 
-        expand_all_btn = QPushButton("  Expand All")
+        expand_all_btn = SpecularHoverButton("  Expand All", primary=False)
         expand_all_btn.setIcon(get_icon("chevron-down"))
         expand_all_btn.setToolTip("Expand all groups")
         expand_all_btn.clicked.connect(self._sample_selection_tree.expandAll)
         expand_btn_layout.addWidget(expand_all_btn)
 
-        collapse_all_btn = QPushButton("  Collapse All")
+        collapse_all_btn = SpecularHoverButton("  Collapse All", primary=False)
         collapse_all_btn.setIcon(get_icon("chevron-right"))
         collapse_all_btn.setToolTip("Collapse all groups")
         collapse_all_btn.clicked.connect(self._sample_selection_tree.collapseAll)
@@ -732,12 +734,8 @@ class MainWindow(QMainWindow):
         # Header with toggle button
         comp_header_layout = QHBoxLayout()
         comp_header_layout.setContentsMargins(0, 0, 0, 0)
-        self._comp_details_toggle = QPushButton("▶ Compensation Details")
-        self._comp_details_toggle.setStyleSheet(
-            "QPushButton { text-align: left; border: none; padding: 4px; "
-            "font-weight: bold; color: #666; } "
-            "QPushButton:hover { color: #333; background-color: #f0f0f0; }"
-        )
+        self._comp_details_toggle = SpecularHoverButton("  Compensation Details", primary=False)
+        self._comp_details_toggle.setIcon(get_icon("grid-flow"))
         self._comp_details_toggle.setCheckable(True)
         self._comp_details_toggle.clicked.connect(self._toggle_comp_details)
         comp_header_layout.addWidget(self._comp_details_toggle)
@@ -757,8 +755,8 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self._comp_matrix_legend)
 
         # Expandable matrix details (for viewing spillover values)
-        self._comp_matrix_details_btn = QPushButton("Show Matrix Values...")
-        self._comp_matrix_details_btn.setStyleSheet("font-size: 11px;")
+        self._comp_matrix_details_btn = SpecularHoverButton("  Show Matrix Values...", primary=False)
+        self._comp_matrix_details_btn.setIcon(get_icon("matrix-numbers"))
         self._comp_matrix_details_btn.clicked.connect(self._show_compensation_matrix_dialog)
         self._comp_matrix_details_btn.setVisible(False)
         content_layout.addWidget(self._comp_matrix_details_btn)
@@ -887,12 +885,12 @@ class MainWindow(QMainWindow):
 
         # Select All / Clear All buttons
         btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("  Select All")
+        select_all_btn = SpecularHoverButton("  Select All", primary=False)
         select_all_btn.setIcon(get_icon("check-star"))
         select_all_btn.clicked.connect(self._on_select_all_export_keywords)
         btn_layout.addWidget(select_all_btn)
 
-        clear_all_btn = QPushButton("  Clear All")
+        clear_all_btn = SpecularHoverButton("  Clear All", primary=False)
         clear_all_btn.setIcon(get_icon("x-swoop"))
         clear_all_btn.clicked.connect(self._on_clear_all_export_keywords)
         btn_layout.addWidget(clear_all_btn)
@@ -1340,8 +1338,8 @@ class MainWindow(QMainWindow):
         """Handle name toggle change from gate tree panel - sync to MFI matrix."""
         self._use_full_gate_names = checked
 
-        # Update button text
-        btn_text = "Full Names" if checked else "Short Names"
+        # Update button text (with spacing for icon)
+        btn_text = "  Full Names" if checked else "  Short Names"
         self._gate_name_toggle_btn.setText(btn_text)
 
         # Update gate tree model display names
@@ -1511,9 +1509,8 @@ class MainWindow(QMainWindow):
         """Toggle the compensation details panel expansion."""
         is_expanded = self._comp_details_toggle.isChecked()
         self._comp_details_content.setVisible(is_expanded)
-        self._comp_details_toggle.setText(
-            "▼ Compensation Details" if is_expanded else "▶ Compensation Details"
-        )
+        # Text with spacing for icon (icon provides visual expand/collapse cue)
+        self._comp_details_toggle.setText("  Compensation Details")
 
     def _update_comp_details_panel(self):
         """Update the compensation details panel with matrix information."""
@@ -1622,7 +1619,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(tabs)
 
         # Close button
-        close_btn = QPushButton("Close")
+        close_btn = SpecularHoverButton("Close", primary=False)
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
 
@@ -1966,8 +1963,9 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About FlowKit GUI",
-            "FlowKit GUI v0.1.0\n\n"
+            "About FlowJoe",
+            "FlowJoe v0.1.0\n\n"
+            "Your daily dose of flow.\n\n"
             "A tool for extracting and analyzing\n"
             "flow cytometry data from FlowJo workspaces.\n\n"
             "Built with FlowKit and PyQt5."
@@ -2015,7 +2013,7 @@ def main():
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
-    app.setApplicationName("FlowKit GUI")
+    app.setApplicationName("FlowJoe")
     app.setOrganizationName("FlowKit")
 
     window = MainWindow()

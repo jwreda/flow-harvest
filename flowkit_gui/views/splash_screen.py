@@ -1,5 +1,5 @@
 """
-Splash screen for FlowKit GUI.
+Splash screen for FlowJoe.
 
 Shows application branding, version information, and workflow guidance
 at startup before the main window appears.
@@ -19,7 +19,7 @@ def get_version_info() -> dict:
         Dictionary with version strings for each component.
     """
     versions = {
-        "FlowKit GUI": "0.1.0",
+        "FlowJoe": "0.1.0",
         "FlowKit": "unknown",
         "PyQt5": "unknown",
         "Python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -94,18 +94,18 @@ class SplashScreen(QWidget):
         layout.setContentsMargins(32, 28, 32, 24)
         layout.setSpacing(0)
 
-        # App title
-        title_label = QLabel("FlowKit GUI")
+        # App title - "Flow" in neutral, "Joe" in pink
+        title_label = QLabel('<span style="color: #333333;">Flow</span><span style="color: #FF69B4;">Joe</span>')
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
-        title_font.setPointSize(24)
+        title_font.setPointSize(28)
         title_font.setWeight(QFont.Bold)
         title_label.setFont(title_font)
-        title_label.setStyleSheet("color: #FF69B4; margin-bottom: 4px;")
+        title_label.setStyleSheet("margin-bottom: 4px;")
         layout.addWidget(title_label)
 
         # Tagline
-        tagline_label = QLabel("Flow Cytometry Analysis Made Simple")
+        tagline_label = QLabel("Your daily dose of flow")
         tagline_label.setAlignment(Qt.AlignCenter)
         tagline_font = QFont()
         tagline_font.setPointSize(11)
