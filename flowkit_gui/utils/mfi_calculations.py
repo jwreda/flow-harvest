@@ -54,9 +54,8 @@ def calculate_geometric_mean(values: ArrayLike) -> float:
     """
     Calculate geometric mean of values.
 
-    Handles negative and zero values by:
-    - Filtering to positive values only
-    - Returning NaN if no positive values exist
+    Returns NaN if any value is non-positive (≤ 0), since geometric mean
+    is mathematically undefined for such values.
 
     Note: Geometric mean is commonly used in flow cytometry because
     fluorescence intensity data is typically log-normally distributed.
@@ -65,21 +64,19 @@ def calculate_geometric_mean(values: ArrayLike) -> float:
         values: Array-like of numeric values
 
     Returns:
-        Geometric mean of positive values, or NaN if no positive values
+        Geometric mean, or NaN if empty or any value is non-positive
     """
     arr = np.asarray(values, dtype=np.float64)
 
     if len(arr) == 0:
         return np.nan
 
-    # Filter to positive values (geometric mean undefined for <= 0)
-    positive_values = arr[arr > 0]
-
-    if len(positive_values) == 0:
+    # Return NaN if any non-positive values (geometric mean undefined for <= 0)
+    if np.any(arr <= 0):
         return np.nan
 
     # Use scipy's gmean for numerical stability
-    return float(stats.gmean(positive_values))
+    return float(stats.gmean(arr))
 
 
 def calculate_all_mfi(
@@ -158,14 +155,11 @@ def calculate_all_mfi_optimized(
     if include_median:
         result['Median'] = float(np.median(arr))
 
-    # Geometric mean requires positive values only
+    # Geometric mean requires all positive values
     if include_geomean:
-        positive_mask = arr > 0
-        positive_values = arr[positive_mask]
-
-        if len(positive_values) == 0:
+        if np.any(arr <= 0):
             result['GeoMean'] = np.nan
         else:
-            result['GeoMean'] = float(stats.gmean(positive_values))
+            result['GeoMean'] = float(stats.gmean(arr))
 
     return result

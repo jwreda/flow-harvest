@@ -106,18 +106,16 @@ class TestCalculateGeometricMean:
         assert np.isnan(result)
 
     def test_geomean_with_zeros(self):
-        """Test geometric mean filters out zeros."""
+        """Test geometric mean returns NaN when zeros present."""
         values = [0, 1, 2, 4]
         result = calculate_geometric_mean(values)
-        # Should only use [1, 2, 4]
-        assert abs(result - 2.0) < 0.0001
+        assert np.isnan(result)
 
     def test_geomean_with_negatives(self):
-        """Test geometric mean filters out negative values."""
+        """Test geometric mean returns NaN when negative values present."""
         values = [-5, -3, 1, 2, 4]
         result = calculate_geometric_mean(values)
-        # Should only use [1, 2, 4]
-        assert abs(result - 2.0) < 0.0001
+        assert np.isnan(result)
 
     def test_geomean_all_negative(self):
         """Test geometric mean returns NaN when all values are non-positive."""

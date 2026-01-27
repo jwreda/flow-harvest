@@ -919,6 +919,10 @@ class MainWindow(QMainWindow):
         mfi_layout.addWidget(self._median_check)
 
         self._geomean_check = QCheckBox("Geometric Mean")
+        self._geomean_check.setToolTip(
+            "Samples with negative fluorescence values will show NA. "
+            "Geometric mean is undefined for non-positive numbers."
+        )
         mfi_layout.addWidget(self._geomean_check)
 
         mfi_layout.addStretch()

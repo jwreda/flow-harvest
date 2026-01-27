@@ -459,7 +459,7 @@ class WorkspaceModel:
         self._ensure_sample_analyzed(sample_id)
         sample = self._workspace.get_sample(sample_id)
         all_events = sample.get_events(source=source)
-        all_labels = list(sample.pnn_labels)
+        all_labels = list(sample.pnn_labels) if hasattr(sample, 'pnn_labels') else []
 
         # Filter to requested channels
         channel_indices = []
@@ -877,8 +877,9 @@ class WorkspaceModel:
                         # Log when gates fail to load (was silently skipped before)
                         logger.warning(f"Failed to load gate '{gate_name}' at path {gate_path_tuple}: {type(e).__name__}: {e}")
                         continue
-            except Exception:
-                # Sample might not have gates defined
+            except Exception as e:
+                # Sample might not have gates defined - log for debugging
+                logger.debug(f"Sample '{sample_id}' gate enumeration failed: {type(e).__name__}: {e}")
                 continue
 
         # Convert to list (preserves order from dict in Python 3.7+)
@@ -1322,7 +1323,7 @@ class WorkspaceModel:
             if parent_id is not None:
                 parent_count = self._get_cached_membership(sample_id, parent_id)
 
-            count = int(result.sum()) if hasattr(result, 'sum') else len(result[result])
+            count = int(result.sum()) if hasattr(result, 'sum') else int(np.count_nonzero(result))
             total = self._get_sample_event_count(sample_id)
 
             logger.debug(f"Gate '{gate_id}' stats: count={count}, total_events={total}")
@@ -1499,7 +1500,7 @@ class WorkspaceModel:
                 return pd.DataFrame()
 
             # Get channel labels
-            all_labels = list(sample.pnn_labels)
+            all_labels = list(sample.pnn_labels) if hasattr(sample, 'pnn_labels') else []
             logger.debug(f"Available channels: {all_labels}")
 
             if channels:
