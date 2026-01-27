@@ -192,7 +192,7 @@ class XLSXExporter:
 
         # Collect compensation summary for export report
         comp_info = self._workspace.get_workspace_compensation_info()
-        comp_assignments = comp_info.get('assignments', {})
+        comp_assignments = comp_info.get('sample_assignments', {})
         matrices_used: Dict[str, int] = {}  # {matrix_name: count}
         spectral_count = 0
 
