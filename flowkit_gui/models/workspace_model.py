@@ -22,6 +22,7 @@ from lxml import etree
 import flowkit as fk
 import pandas as pd
 import numpy as np
+from natsort import natsorted, ns
 
 from ..utils.logging_config import get_logger
 from ..utils.cache import MemoryBoundedLRUCache
@@ -635,6 +636,9 @@ class WorkspaceModel:
                 event_count=meta.event_count or 0  # May have count from WSP
             ))
 
+        # Sort samples naturally by name (e.g., A1, A2, A10 not A1, A10, A2)
+        self._samples = natsorted(self._samples, key=lambda s: s.name, alg=ns.IGNORECASE)
+
         # Populate gates from metadata
         self._gates = []
         for gate_meta in self._wsp_metadata.gates:
@@ -805,6 +809,10 @@ class WorkspaceModel:
                 # Sample might be missing or unreadable, skip it
                 logger.error(f"Failed to extract sample '{sample_id}': {type(e).__name__}: {e}")
                 continue
+
+        # Sort samples naturally by name (e.g., A1, A2, A10 not A1, A10, A2)
+        self._samples = natsorted(self._samples, key=lambda s: s.name, alg=ns.IGNORECASE)
+        logger.debug(f"Sorted {len(self._samples)} samples by natural order")
 
         logger.info(f"Sample extraction complete: {samples_with_data} with data, {samples_without_data} without data")
 

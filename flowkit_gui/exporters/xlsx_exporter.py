@@ -232,7 +232,8 @@ class XLSXExporter:
         selected_sheet_count = 4 if has_selected_markers else 0
         tidy_all_count = 2 if self._include_tidy_frequencies and self._include_all_sheets else 0
         tidy_selected_count = 2 if self._include_tidy_frequencies and has_selected_markers else 0
-        total_steps = 2 + all_sheet_count + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
+        # +1 for Compensation sheet
+        total_steps = 3 + all_sheet_count + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
         current_step = 0
 
         # Sheet 1: Gating Strategy
@@ -268,6 +269,16 @@ class XLSXExporter:
             current_step += 1
             if progress_callback:
                 progress_callback(current_step, total_steps)
+
+        # Sheet: Compensation
+        if status_callback:
+            status_callback("Writing Compensation sheet...")
+        ws_compensation = wb.create_sheet("Compensation")
+        self._write_compensation_sheet(ws_compensation, comp_info, processing_sample_ids)
+        sheets_created.append("Compensation")
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step, total_steps)
 
         # Pre-calculate statistics ONCE with all markers (optimization)
         # This avoids calculating the same gate statistics twice
@@ -981,6 +992,80 @@ class XLSXExporter:
             ws.append([warning])
 
         self._autofit_columns(ws, max_width=100)
+        ws.freeze_panes = "A2"
+
+    def _write_compensation_sheet(
+        self,
+        ws,
+        comp_info: Dict[str, Any],
+        processing_sample_ids: List[str]
+    ) -> None:
+        """
+        Write compensation information sheet.
+
+        Creates two sections:
+        1. Global Matrices - all compensation matrices defined in workspace
+        2. Sample Assignments - per-sample compensation matrix assignments
+
+        Args:
+            ws: Worksheet to write to
+            comp_info: Result from workspace.get_workspace_compensation_info()
+            processing_sample_ids: List of sample IDs being exported
+        """
+        global_matrices = comp_info.get('global_matrices', [])
+        sample_assignments = comp_info.get('sample_assignments', {})
+
+        # Section 1: Global Matrices
+        ws.append(["=== Global Compensation Matrices ==="])
+        ws.append([])  # blank row
+
+        headers_matrices = ["Matrix Name", "Matrix ID", "Type", "Color", "Status", "Detector Count"]
+        ws.append(headers_matrices)
+        self._style_header_row(ws, ws.max_row)
+
+        if global_matrices:
+            for matrix in global_matrices:
+                matrix_type = "Spectral" if matrix.spectral else "Conventional"
+                ws.append([
+                    matrix.name,
+                    matrix.matrix_id,
+                    matrix_type,
+                    matrix.color or "",
+                    getattr(matrix, 'status', "") or "",
+                    len(matrix.detectors) if matrix.detectors else 0
+                ])
+        else:
+            ws.append(["No compensation matrices defined in workspace"])
+
+        # Blank separator rows
+        ws.append([])
+        ws.append([])
+
+        # Section 2: Sample Assignments
+        ws.append(["=== Per-Sample Compensation Assignments ==="])
+        ws.append([])  # blank row
+
+        headers_samples = ["sample_id", "sample_name", "Compensation Matrix", "Matrix Type", "Color"]
+        ws.append(headers_samples)
+        self._style_header_row(ws, ws.max_row)
+
+        for sample_id in processing_sample_ids:
+            sample = self._workspace.get_sample_by_id(sample_id)
+            sample_name = sample.name if sample else sample_id
+
+            assignment = sample_assignments.get(sample_id)
+            if assignment and assignment.matrix_name:
+                matrix_name = assignment.matrix_name
+                matrix_type = "Spectral" if assignment.spectral else "Conventional"
+                color = assignment.color or ""
+            else:
+                matrix_name = "None"
+                matrix_type = "N/A"
+                color = ""
+
+            ws.append([sample_id, sample_name, matrix_name, matrix_type, color])
+
+        self._autofit_columns(ws, max_width=50)
         ws.freeze_panes = "A2"
 
     def _write_normalized_frequency_sheet(

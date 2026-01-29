@@ -11,6 +11,35 @@ import platform
 MIN_FLOWKIT_VERSION = "1.0.0"
 
 
+def ensure_dependencies():
+    """
+    Check for and install missing optional dependencies.
+
+    This ensures packages like natsort are available even if the user
+    hasn't updated their environment after a FlowKit GUI update.
+    """
+    import subprocess
+
+    dependencies = [
+        ("natsort", "natsort>=8.0.0"),  # (import_name, pip_package)
+    ]
+
+    for import_name, pip_package in dependencies:
+        try:
+            __import__(import_name)
+        except ImportError:
+            print(f"Installing missing dependency: {pip_package}")
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", pip_package],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                print(f"Successfully installed {pip_package}")
+            except subprocess.CalledProcessError as e:
+                print(f"Warning: Failed to install {pip_package}: {e}")
+
+
 def check_flowkit_version():
     """
     Check if FlowKit version meets minimum requirements.
@@ -40,6 +69,9 @@ def check_flowkit_version():
 
 def main():
     """Application entry point."""
+    # Ensure all dependencies are installed before importing modules that need them
+    ensure_dependencies()
+
     from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import Qt, QTimer, QEventLoop
     from .views.main_window import MainWindow
