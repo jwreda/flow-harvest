@@ -10,7 +10,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from flowkit_gui.utils.mfi_calculations import (
-    calculate_mean, calculate_median, calculate_geometric_mean, calculate_all_mfi
+    calculate_mean, calculate_median, calculate_geometric_mean, calculate_all_mfi,
+    explain_geometric_mean_result
 )
 
 
@@ -159,6 +160,61 @@ class TestCalculateAllMFI:
         result = calculate_all_mfi(values, include_mean=False, include_median=False, include_geomean=False)
 
         assert result == {}
+
+
+class TestExplainGeometricMeanResult:
+    """Tests for explain_geometric_mean_result function."""
+
+    def test_explain_geometric_mean_negative_values(self):
+        """Test explanation for negative values."""
+        values = [100, 200, -50, 300]
+        explanation = explain_geometric_mean_result(values)
+        assert "1 negative" in explanation
+        assert "non-positive values" in explanation
+        assert "Median" in explanation
+
+    def test_explain_geometric_mean_zero_values(self):
+        """Test explanation for zero values."""
+        values = [100, 0, 200, 300]
+        explanation = explain_geometric_mean_result(values)
+        assert "1 zero" in explanation
+        assert "non-positive values" in explanation
+
+    def test_explain_geometric_mean_mixed_nonpositive(self):
+        """Test explanation for mixed negative and zero values."""
+        values = [100, 0, -50, 200, 0, -25]
+        explanation = explain_geometric_mean_result(values)
+        assert "4 non-positive values" in explanation
+        assert "2 negative" in explanation
+        assert "2 zero" in explanation
+        assert "(66.7%)" in explanation
+
+    def test_explain_geometric_mean_valid(self):
+        """Test no explanation for valid data."""
+        values = [100, 200, 300, 400]
+        explanation = explain_geometric_mean_result(values)
+        assert explanation == ""
+
+    def test_explain_geometric_mean_empty(self):
+        """Test explanation for empty data."""
+        values = []
+        explanation = explain_geometric_mean_result(values)
+        assert "empty data" in explanation
+
+    def test_explain_geometric_mean_all_negative(self):
+        """Test explanation for all negative values."""
+        values = [-100, -200, -300]
+        explanation = explain_geometric_mean_result(values)
+        assert "3 non-positive values" in explanation
+        assert "3 negative" in explanation
+        assert "0 zero" in explanation
+        assert "(100.0%)" in explanation
+
+    def test_explain_geometric_mean_single_positive(self):
+        """Test no explanation for single positive value."""
+        values = [42]
+        explanation = explain_geometric_mean_result(values)
+        assert explanation == ""
 
 
 if __name__ == "__main__":

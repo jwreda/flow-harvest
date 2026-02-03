@@ -17,13 +17,17 @@ import numpy as np
 from .workspace_model import WorkspaceModel, Sample, DataSource
 from ..utils.mfi_calculations import (
     calculate_mean, calculate_median, calculate_geometric_mean,
-    calculate_all_mfi_optimized
+    calculate_all_mfi_optimized, explain_geometric_mean_result
 )
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
 from ..utils.timing import timed_operation
 
 logger = get_logger("statistics_model")
+
+# Event count thresholds for warnings
+LOW_EVENT_WARNING_THRESHOLD = 10
+MODERATE_EVENT_WARNING_THRESHOLD = 50
 
 
 class MFIMetric(Enum):
@@ -190,6 +194,14 @@ class StatisticsModel:
 
             logger.debug(f"Gate stats for {sample_id}/{gate_id}: count={stats.event_count}")
 
+            # Add warnings for low event counts
+            if stats.event_count > 0 and stats.event_count < LOW_EVENT_WARNING_THRESHOLD:
+                warning_msg = f"Gate '{gate_id}' has only {stats.event_count} events - statistics are unreliable"
+                logger.warning(warning_msg)
+                self._warnings.append(f"Sample '{sample_id}', {warning_msg}")
+            elif stats.event_count > 0 and stats.event_count < MODERATE_EVENT_WARNING_THRESHOLD:
+                logger.info(f"Gate '{gate_id}' has {stats.event_count} events - interpret statistics with caution")
+
             # Calculate MFI if we have events and channels
             if stats.event_count == 0:
                 logger.debug(f"Skipping MFI calculation: event_count=0 for {sample_id}/{gate_id}")
@@ -223,6 +235,14 @@ class StatisticsModel:
                                 include_median=MFIMetric.MEDIAN in metrics,
                                 include_geomean=MFIMetric.GEOMETRIC_MEAN in metrics
                             )
+
+                            # Log explanation when gMFI is NaN
+                            if MFIMetric.GEOMETRIC_MEAN in metrics:
+                                gmfi_value = stats.mfi_values[channel].get('GeoMean')
+                                if gmfi_value is not None and np.isnan(gmfi_value):
+                                    explanation = explain_geometric_mean_result(channel_data)
+                                    if explanation:
+                                        logger.info(f"gMFI NaN for {sample_id}/{gate_id}/{channel}: {explanation}")
 
                             channels_calculated += 1
                         else:

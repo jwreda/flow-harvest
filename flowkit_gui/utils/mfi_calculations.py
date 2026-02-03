@@ -79,6 +79,40 @@ def calculate_geometric_mean(values: ArrayLike) -> float:
     return float(stats.gmean(arr))
 
 
+def explain_geometric_mean_result(values: ArrayLike) -> str:
+    """
+    Explain why geometric mean might return NaN.
+
+    This function analyzes an array of values and returns an explanation
+    for why calculate_geometric_mean would return NaN (if it would).
+
+    Args:
+        values: Array-like of numeric values
+
+    Returns:
+        Explanation string, or empty string if gMFI is valid
+    """
+    arr = np.asarray(values, dtype=np.float64)
+
+    if len(arr) == 0:
+        return "Geometric mean is undefined for empty data"
+
+    n_negative = int(np.sum(arr < 0))
+    n_zero = int(np.sum(arr == 0))
+    n_nonpositive = n_negative + n_zero
+
+    if n_nonpositive > 0:
+        pct_nonpositive = (n_nonpositive / len(arr)) * 100
+        return (
+            f"Geometric mean is undefined for non-positive values. "
+            f"Data contains {n_nonpositive} non-positive values ({pct_nonpositive:.1f}%): "
+            f"{n_negative} negative, {n_zero} zero. "
+            f"Consider using Median instead."
+        )
+
+    return ""
+
+
 def calculate_all_mfi(
     values: ArrayLike,
     include_mean: bool = True,
