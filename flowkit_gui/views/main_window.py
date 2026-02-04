@@ -923,6 +923,7 @@ class MainWindow(QMainWindow):
             "Samples with negative fluorescence values will show NA. "
             "Geometric mean is undefined for non-positive numbers."
         )
+        self._geomean_check.stateChanged.connect(self._on_geomean_toggled)
         mfi_layout.addWidget(self._geomean_check)
 
         mfi_layout.addStretch()
@@ -1967,6 +1968,24 @@ class MainWindow(QMainWindow):
         if self._geomean_check.isChecked():
             metrics.append(MFIMetric.GEOMETRIC_MEAN)
         return metrics
+
+    def _on_geomean_toggled(self, state):
+        """Show warning when user enables geometric mean calculation."""
+        if state == Qt.Checked:
+            QMessageBox.warning(
+                self,
+                "Geometric Mean (gMFI) - Important Notice",
+                "Geometric Mean Fluorescent Intensity (gMFI) values calculated by "
+                "FlowJoe will NOT match FlowJo for any marker where negative "
+                "fluorescence values are present.\n\n"
+                "FlowJo calculates gMFI in biexponential-transformed 'graph space' "
+                "where all values are positive. FlowJoe calculates on raw linear "
+                "values, which is mathematically standard but produces different "
+                "results for populations with negative values.\n\n"
+                "For such populations, gMFI will show as NA since geometric mean "
+                "is undefined for non-positive values.\n\n"
+                "Consider using Median instead for more robust and comparable results."
+            )
 
     def _get_selected_data_source(self) -> DataSource:
         """Get the selected data source (compensation setting)."""
