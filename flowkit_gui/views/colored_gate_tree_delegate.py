@@ -132,7 +132,7 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
         # Draw gate name text
         text = index.data(Qt.DisplayRole)
         if text:
-            text_color = option.palette.text().color()
+            text_color = QColor(colors.get("text_primary", "#333333"))
             if not is_enabled:
                 text_color.setAlpha(100)
 

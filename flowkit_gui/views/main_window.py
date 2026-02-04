@@ -611,7 +611,6 @@ class MainWindow(QMainWindow):
         self._gate_tree_view = QTreeView()
         self._gate_tree_view.setObjectName("gateTreeView")  # For CSS targeting
         self._gate_tree_view.setModel(self._gate_tree_model)
-        self._gate_tree_view.setAlternatingRowColors(True)
         self._gate_tree_view.setAnimated(True)
         self._gate_tree_view.setMouseTracking(True)
         self._gate_tree_view.header().setStretchLastSection(True)
@@ -724,7 +723,6 @@ class MainWindow(QMainWindow):
         # Sample selection tree
         self._sample_selection_tree = QTreeView()
         self._sample_selection_tree.setModel(self._sample_selection_model)
-        self._sample_selection_tree.setAlternatingRowColors(True)
         self._sample_selection_tree.setAnimated(True)
         self._sample_selection_tree.setMouseTracking(True)
         self._sample_selection_tree.header().setStretchLastSection(True)

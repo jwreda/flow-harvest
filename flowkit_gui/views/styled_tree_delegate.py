@@ -3,7 +3,7 @@ Custom styled delegate for tree view items with selection accent bar.
 """
 
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtGui import QPainter, QColor, QPalette
 from PyQt5.QtCore import Qt, QRect
 
 from ..utils.theme import get_colors
@@ -54,7 +54,21 @@ class AccentedTreeItemDelegate(QStyledItemDelegate):
             # Hover background
             painter.fillRect(option.rect, QColor(hover_color))
 
+        else:
+            # Draw normal background with alternating colors
+            alt_row_color = colors.get("alt_row", "#FFF5F8")
+            bg_color = colors.get("background", "#FFFFFF")
+            if index.row() % 2 == 0:
+                painter.fillRect(option.rect, QColor(bg_color))
+            else:
+                painter.fillRect(option.rect, QColor(alt_row_color))
+
         painter.restore()
+
+        # Update palette text color for theme awareness before calling super
+        text_color = QColor(colors.get("text_primary", "#333333"))
+        option.palette.setColor(QPalette.Text, text_color)
+        option.palette.setColor(QPalette.WindowText, text_color)
 
         # Call base class to draw the item content (text, icon, etc.)
         super().paint(painter, option, index)
