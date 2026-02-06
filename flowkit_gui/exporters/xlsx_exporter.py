@@ -24,6 +24,7 @@ from ..models.statistics_model import StatisticsModel, MFIMetric, FrequencyDataT
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
 from ..utils.timing import PipelineTimer
+from .export_config import ExportConfig
 
 logger = get_logger("xlsx_exporter")
 
@@ -89,10 +90,11 @@ class XLSXExporter:
         self,
         workspace: WorkspaceModel,
         keywords_model: KeywordsModel,
-        gate_ids: List[str],
-        selected_markers: List[str],
-        all_markers: List[str],
-        mfi_metrics: List[MFIMetric],
+        config: Optional[ExportConfig] = None,
+        gate_ids: Optional[List[str]] = None,
+        selected_markers: Optional[List[str]] = None,
+        all_markers: Optional[List[str]] = None,
+        mfi_metrics: Optional[List[MFIMetric]] = None,
         include_wide_keywords: bool = False,
         include_tidy_frequencies: bool = False,
         include_all_sheets: bool = False,
@@ -104,7 +106,12 @@ class XLSXExporter:
         reference_gate_ids: Optional[List[str]] = None,
         descendant_depth: int = 0,
         volume_normalize: bool = False,
-        volume_denominator: float = 100.0
+        volume_denominator: float = 100.0,
+        bead_normalize: bool = False,
+        bead_gate_id: Optional[str] = None,
+        bead_user_number: float = 1000.0,
+        bead_mode: str = "per_n_beads",
+        scale_factors: Optional[Dict[str, float]] = None
     ):
         """
         Initialize exporter.
@@ -112,23 +119,54 @@ class XLSXExporter:
         Args:
             workspace: Loaded WorkspaceModel
             keywords_model: KeywordsModel with sample data
-            gate_ids: List of gate IDs to include
-            selected_markers: User-selected marker channels
-            all_markers: All available marker channels
-            mfi_metrics: List of MFI metrics to calculate
-            include_wide_keywords: Whether to include Keywords_Wide sheet
-            include_tidy_frequencies: Whether to include tidy frequency sheets
-            include_all_sheets: Whether to include _All sheets (Counts_All, Frequencies_All, MFI_All, Concatenated_All)
-            data_source: Event data source (AUTO, RAW, or COMP)
-            index_columns: Keywords to use as index columns in Keywords_Wide sheet
-            selected_keywords: Keywords to include in export (None = all keywords)
-            selected_sample_ids: List of sample IDs to export (None = all samples)
-            matrix_selections: List of (gate_id, channel) tuples for sparse MFI selection
-            reference_gate_ids: Gates to use as normalization references for frequency sheets
-            descendant_depth: Max depth for descendant gates (0 = unlimited)
-            volume_normalize: Whether to calculate volume-normalized counts
-            volume_denominator: Denominator for normalization (e.g., 100 for per 100 μL)
+            config: Optional ExportConfig object containing all export parameters.
+                   If provided, overrides all other keyword arguments.
+            gate_ids: List of gate IDs to include (ignored if config provided)
+            selected_markers: User-selected marker channels (ignored if config provided)
+            all_markers: All available marker channels (ignored if config provided)
+            mfi_metrics: List of MFI metrics to calculate (ignored if config provided)
+            include_wide_keywords: Whether to include Keywords_Wide sheet (ignored if config provided)
+            include_tidy_frequencies: Whether to include tidy frequency sheets (ignored if config provided)
+            include_all_sheets: Whether to include _All sheets (Counts_All, Frequencies_All, MFI_All, Concatenated_All) (ignored if config provided)
+            data_source: Event data source (AUTO, RAW, or COMP) (ignored if config provided)
+            index_columns: Keywords to use as index columns in Keywords_Wide sheet (ignored if config provided)
+            selected_keywords: Keywords to include in export (None = all keywords) (ignored if config provided)
+            selected_sample_ids: List of sample IDs to export (None = all samples) (ignored if config provided)
+            matrix_selections: List of (gate_id, channel) tuples for sparse MFI selection (ignored if config provided)
+            reference_gate_ids: Gates to use as normalization references for frequency sheets (ignored if config provided)
+            descendant_depth: Max depth for descendant gates (0 = unlimited) (ignored if config provided)
+            volume_normalize: Whether to calculate volume-normalized counts (ignored if config provided)
+            volume_denominator: Denominator for normalization (e.g., 100 for per 100 μL) (ignored if config provided)
+            bead_normalize: Whether to calculate bead-normalized counts (ignored if config provided)
+            bead_gate_id: Gate ID for counting beads population (ignored if config provided)
+            bead_user_number: Denominator for "per N beads" or beads per well (ignored if config provided)
+            bead_mode: "per_n_beads" or "per_well" (ignored if config provided)
+            scale_factors: Optional dict of sample_id -> scale factor for scaling event counts (ignored if config provided)
         """
+        # If config provided, unpack all parameters from it
+        if config is not None:
+            gate_ids = config.gate_ids
+            selected_markers = config.selected_markers
+            all_markers = config.all_markers
+            mfi_metrics = config.mfi_metrics
+            include_wide_keywords = config.include_wide_keywords
+            include_tidy_frequencies = config.include_tidy_frequencies
+            include_all_sheets = config.include_all_sheets
+            data_source = config.data_source
+            index_columns = config.index_columns
+            selected_keywords = config.selected_keywords
+            selected_sample_ids = config.selected_sample_ids
+            matrix_selections = config.matrix_selections
+            reference_gate_ids = config.reference_gate_ids
+            descendant_depth = config.descendant_depth
+            volume_normalize = config.volume_normalize
+            volume_denominator = config.volume_denominator
+            bead_normalize = config.bead_normalize
+            bead_gate_id = config.bead_gate_id
+            bead_user_number = config.bead_user_number
+            bead_mode = config.bead_mode
+            scale_factors = config.scale_factors
+
         self._workspace = workspace
         self._keywords_model = keywords_model
         self._gate_ids = gate_ids
@@ -147,6 +185,11 @@ class XLSXExporter:
         self._descendant_depth = descendant_depth
         self._volume_normalize = volume_normalize
         self._volume_denominator = volume_denominator
+        self._bead_normalize = bead_normalize
+        self._bead_gate_id = bead_gate_id
+        self._bead_user_number = bead_user_number
+        self._bead_mode = bead_mode
+        self._scale_factors = scale_factors
         self._warnings: List[str] = []
 
         # Build matrix selections lookup for efficient checking
@@ -338,6 +381,28 @@ class XLSXExporter:
                     logger.error(f"Volume normalization failed: {e}")
                     self._warnings.append(f"Volume normalization failed: {e}")
 
+        # Calculate bead-normalized counts if enabled
+        bead_normalized_df = None
+        if self._bead_normalize and self._bead_gate_id:
+            if status_callback:
+                status_callback("Calculating bead-normalized counts...")
+            with timer.step("Calculate bead-normalized counts"):
+                try:
+                    bead_df, bead_warnings = stats_model.calculate_bead_normalized_counts(
+                        bead_gate_id=self._bead_gate_id,
+                        user_number=self._bead_user_number,
+                        mode=self._bead_mode,
+                        gate_ids=self._gate_ids,
+                        sample_ids=self._selected_sample_ids
+                    )
+                    bead_normalized_df = bead_df
+                    if bead_warnings:
+                        self._warnings.extend(bead_warnings)
+                        logger.info(f"Bead normalization: {len(bead_warnings)} warnings")
+                except Exception as e:
+                    logger.error(f"Bead normalization failed: {e}")
+                    self._warnings.append(f"Bead normalization failed: {e}")
+
         # Sheet: Counts_All (wide format, counts only)
         if self._include_all_sheets:
             if status_callback:
@@ -389,6 +454,20 @@ class XLSXExporter:
                 current_step += 1
                 if progress_callback:
                     progress_callback(current_step, total_steps)
+
+        # Sheet: Bead-normalized counts (if enabled)
+        if self._bead_normalize and bead_normalized_df is not None:
+            bead_sheet_name = stats_model.get_bead_sheet_name(
+                self._bead_user_number, self._bead_mode
+            )
+            if status_callback:
+                status_callback(f"Writing {bead_sheet_name} sheet...")
+            ws_bead_norm = wb.create_sheet(bead_sheet_name)
+            self._write_bead_normalized_counts_sheet(ws_bead_norm, bead_normalized_df, bead_sheet_name)
+            sheets_created.append(bead_sheet_name)
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Sheet: Frequencies_All (wide format, percentages only)
         if self._include_all_sheets:
@@ -793,7 +872,8 @@ class XLSXExporter:
             markers,
             self._mfi_metrics,
             include_keywords=True,
-            include_gate_stats=include_gate_stats
+            include_gate_stats=include_gate_stats,
+            scale_factors=self._scale_factors
         )
 
         if df.empty:
@@ -862,7 +942,8 @@ class XLSXExporter:
             metrics=self._mfi_metrics,
             include_keywords=True,
             include_gate_stats=include_gate_stats,
-            all_gate_ids=self._gate_ids if include_gate_stats else None
+            all_gate_ids=self._gate_ids if include_gate_stats else None,
+            scale_factors=self._scale_factors
         )
 
         if df.empty:
@@ -1307,15 +1388,18 @@ class XLSXExporter:
         cols = list(df.columns)
 
         # Categorize columns
-        sample_cols = []  # sample_id, sample_name
+        sample_cols = []  # sample_id, sample_name, scale_factor
         keyword_cols = []  # User keywords
         count_cols = []  # Raw counts
+        scaled_count_cols = []  # Scaled counts (scale factor applied)
         parent_cols = []  # %parent
         mfi_cols = []  # MFI values
 
         for col in cols:
-            if col in ('sample_id', 'sample_name'):
+            if col in ('sample_id', 'sample_name', 'scale_factor'):
                 sample_cols.append(col)
+            elif '_scaled_count' in col:
+                scaled_count_cols.append(col)
             elif '_count' in col and '%' not in col:
                 count_cols.append(col)
             elif '%parent' in col.lower():
@@ -1328,12 +1412,13 @@ class XLSXExporter:
 
         # Sort each group alphabetically for consistency
         count_cols.sort()
+        scaled_count_cols.sort()
         parent_cols.sort()
         mfi_cols.sort()
         keyword_cols.sort()
 
         # Build new column order
-        new_order = sample_cols + keyword_cols + count_cols
+        new_order = sample_cols + keyword_cols + count_cols + scaled_count_cols
 
         # Add normalized counts if available
         if normalized_counts_df is not None and not normalized_counts_df.empty:
@@ -1442,3 +1527,37 @@ class XLSXExporter:
 
         # Freeze header row
         ws.freeze_panes = "B2"
+
+    def _write_bead_normalized_counts_sheet(
+        self,
+        ws,
+        df: pd.DataFrame,
+        description: str
+    ) -> None:
+        """
+        Write bead-normalized counts to a worksheet.
+
+        Args:
+            ws: Worksheet to write to
+            df: DataFrame with bead-normalized counts (from StatisticsModel)
+            description: Description for logging
+        """
+        logger.debug(f"Writing bead-normalized counts sheet: {description}")
+
+        if df.empty:
+            ws.append([f"No data available for {description}"])
+            return
+
+        # Write header
+        headers = list(df.columns)
+        ws.append(headers)
+        self._style_header_row(ws, 1)
+
+        # Write data (4 decimal places for normalized counts)
+        self._write_dataframe_rows(ws, df, decimal_places=4)
+
+        # Auto-fit columns
+        self._autofit_columns(ws, max_width=40)
+
+        # Freeze header row and sample columns
+        ws.freeze_panes = "C2"

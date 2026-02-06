@@ -36,6 +36,13 @@ class SettingsManager:
     KEY_SPLITTER_STATE = "ui/splitter_state"
     KEY_LAST_FCS_DIR = "files/last_fcs_dir"
 
+    # Performance settings keys
+    KEY_PERFORMANCE_PRESET = "performance/preset"
+    KEY_CACHE_LIMIT_MB = "performance/cache_limit_mb"
+    KEY_BATCH_SIZE = "performance/batch_size"
+    KEY_GC_INTERVAL = "performance/gc_interval"
+    KEY_MAX_WORKERS = "performance/max_workers"
+
     # Default values
     DEFAULT_MAX_RECENT_FILES = 10
 
@@ -191,6 +198,53 @@ class SettingsManager:
     def set_last_fcs_dir(self, directory: str) -> None:
         """Save the last used FCS directory."""
         self._settings.setValue(self.KEY_LAST_FCS_DIR, directory)
+
+    # Performance settings
+
+    def get_performance_preset(self) -> int:
+        """
+        Get saved performance preset.
+
+        Returns:
+            0=Normal, 1=Low Resource, 2=Minimal (defaults to 0)
+        """
+        return self._settings.value(self.KEY_PERFORMANCE_PRESET, 0, type=int)
+
+    def set_performance_preset(self, preset: int) -> None:
+        """Save performance preset (0=Normal, 1=Low, 2=Minimal)."""
+        self._settings.setValue(self.KEY_PERFORMANCE_PRESET, preset)
+
+    def get_cache_limit_mb(self) -> int:
+        """Get saved cache limit in MB (defaults to 4096)."""
+        return self._settings.value(self.KEY_CACHE_LIMIT_MB, 4096, type=int)
+
+    def set_cache_limit_mb(self, value: int) -> None:
+        """Save cache limit in MB."""
+        self._settings.setValue(self.KEY_CACHE_LIMIT_MB, value)
+
+    def get_batch_size(self) -> int:
+        """Get saved batch size (defaults to 10)."""
+        return self._settings.value(self.KEY_BATCH_SIZE, 10, type=int)
+
+    def set_batch_size(self, value: int) -> None:
+        """Save batch size."""
+        self._settings.setValue(self.KEY_BATCH_SIZE, value)
+
+    def get_gc_interval(self) -> int:
+        """Get saved GC interval (defaults to 5)."""
+        return self._settings.value(self.KEY_GC_INTERVAL, 5, type=int)
+
+    def set_gc_interval(self, value: int) -> None:
+        """Save GC interval."""
+        self._settings.setValue(self.KEY_GC_INTERVAL, value)
+
+    def get_max_workers(self) -> int:
+        """Get saved max workers (0=auto, defaults to 0)."""
+        return self._settings.value(self.KEY_MAX_WORKERS, 0, type=int)
+
+    def set_max_workers(self, value: int) -> None:
+        """Save max workers (0=auto)."""
+        self._settings.setValue(self.KEY_MAX_WORKERS, value)
 
     # General settings access
 

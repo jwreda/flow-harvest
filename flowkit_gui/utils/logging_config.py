@@ -39,6 +39,11 @@ def setup_logging(log_file: str = "flowkit_debug.log") -> logging.Logger:
     console_handler.setFormatter(console_format)
 
     # File handler - DEBUG level for detailed diagnostics
+    import sys as _sys
+    if getattr(_sys, 'frozen', False):
+        _log_dir = Path.home() / ".flowkit_gui"
+        _log_dir.mkdir(exist_ok=True)
+        log_file = str(_log_dir / log_file)
     file_handler = logging.FileHandler(log_file, mode='w')
     file_handler.setLevel(logging.DEBUG)
     file_format = logging.Formatter(

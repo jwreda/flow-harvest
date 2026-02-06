@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import multiprocessing
 import re
+import threading
 from lxml import etree
 import flowkit as fk
 import pandas as pd
@@ -227,6 +228,9 @@ class WorkspaceModel:
         )
         # Track which samples have been analyzed (for on-demand analysis)
         self._analyzed_samples: Set[str] = set()
+        self._analyzed_samples_lock = threading.Lock()
+        # Track samples that failed analysis (sample_id -> error message)
+        self._failed_samples: Dict[str, str] = {}
         # Track which samples have had compensation applied
         self._samples_with_compensation_applied: Set[str] = set()
         # Two-phase loading state
@@ -277,6 +281,7 @@ class WorkspaceModel:
         self._event_cache.clear()
         self._membership_cache.clear()
         self._analyzed_samples.clear()  # Clear analysis tracking too
+        self._failed_samples.clear()  # Clear failure tracking too
         gc.collect()  # Force garbage collection to release memory
 
         total_items = event_count + membership_count
@@ -390,6 +395,10 @@ class WorkspaceModel:
         if sample_id in self._analyzed_samples:
             return
 
+        if sample_id in self._failed_samples:
+            logger.debug(f"Skipping previously failed sample: {sample_id}")
+            return
+
         if not self._workspace:
             return
 
@@ -400,8 +409,8 @@ class WorkspaceModel:
             logger.debug(f"Successfully analyzed sample: {sample_id}")
         except Exception as e:
             logger.warning(f"Failed to analyze sample {sample_id}: {e}")
-            # Still mark as attempted to avoid repeated failures
-            self._analyzed_samples.add(sample_id)
+            # Track as failed — do NOT mark as analyzed so statistics aren't silently zero
+            self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
         """Get events from cache or load and cache them.
@@ -1155,6 +1164,11 @@ class WorkspaceModel:
                         logger.debug(f"Sample {sample_id} already analyzed, skipping")
                         continue
 
+                    # Skip if previously failed
+                    if sample_id in self._failed_samples:
+                        logger.debug(f"Sample {sample_id} previously failed, skipping")
+                        continue
+
                     logger.debug(f"Analyzing sample: {sample_id}")
                     self._workspace.analyze_samples(sample_id=sample_id)
                     self._analyzed_samples.add(sample_id)
@@ -1165,8 +1179,8 @@ class WorkspaceModel:
                     logger.error(f"analyze_sample FAILED for {sample_id}: {type(e).__name__}: {e}")
                     import traceback
                     logger.debug(f"Full traceback:\n{traceback.format_exc()}")
-                    # Mark as attempted to avoid retrying
-                    self._analyzed_samples.add(sample_id)
+                    # Track as failed — do NOT mark as analyzed
+                    self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
                     continue
 
             # Force garbage collection between batches to release memory
@@ -1211,10 +1225,10 @@ class WorkspaceModel:
         if sample_ids is None:
             sample_ids = [s.sample_id for s in self._samples]
 
-        # Filter out already-analyzed samples
+        # Filter out already-analyzed and already-failed samples
         samples_to_analyze = [
             sid for sid in sample_ids
-            if sid not in self._analyzed_samples
+            if sid not in self._analyzed_samples and sid not in self._failed_samples
         ]
 
         if not samples_to_analyze:
@@ -1260,11 +1274,12 @@ class WorkspaceModel:
                     results[sample_id] = success
 
                     if success:
-                        self._analyzed_samples.add(sample_id)
+                        with self._analyzed_samples_lock:
+                            self._analyzed_samples.add(sample_id)
                         logger.debug(f"Parallel analysis completed: {sample_id}")
                     else:
-                        # Mark as attempted to avoid retrying
-                        self._analyzed_samples.add(sample_id)
+                        # Track as failed — do NOT mark as analyzed
+                        self._failed_samples[sample_id] = error or "Unknown error"
                         logger.warning(f"Parallel analysis failed for {sample_id}: {error}")
 
                     completed += 1
@@ -1562,6 +1577,23 @@ class WorkspaceModel:
             return self._workspace.get_analysis_report()
         except Exception:
             return pd.DataFrame()
+
+    def get_analysis_failures(self) -> Dict[str, str]:
+        """Get samples that failed analysis with error messages."""
+        return self._failed_samples.copy()
+
+    def get_analysis_summary(self) -> Dict[str, int]:
+        """Get summary of analysis status across all samples."""
+        total = len(self._samples) if self._samples else 0
+        analyzed = len(self._analyzed_samples)
+        failed = len(self._failed_samples)
+        pending = total - analyzed - failed
+        return {
+            'total': total,
+            'analyzed': analyzed,
+            'failed': failed,
+            'pending': pending
+        }
 
     def has_fcs_data(self, sample_id: str) -> bool:
         """

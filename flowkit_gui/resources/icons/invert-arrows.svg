@@ -1,10 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FF69B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Top curved arrow going right -->
-  <path d="M16 3l3 3-3 3"/>
-  <path d="M5 6h14"/>
-  <!-- Bottom curved arrow going left -->
-  <path d="M8 21l-3-3 3-3"/>
-  <path d="M19 18H5"/>
-  <!-- Small sparkle accent -->
-  <path d="M12 10l.4.8.8.4-.8.4-.4.8-.4-.8-.8-.4.8-.4.4-.8" fill="#FF69B4" stroke="none"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>

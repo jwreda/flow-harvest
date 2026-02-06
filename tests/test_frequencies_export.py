@@ -97,6 +97,13 @@ class MockWorkspaceModel:
             'assignments': {}
         }
 
+    def get_sample_by_id(self, sample_id: str):
+        """Get a sample by its ID."""
+        for sample in self._samples:
+            if sample.sample_id == sample_id:
+                return sample
+        return None
+
 
 def create_test_sample(sample_id, name, keywords):
     """Create a test sample."""
@@ -713,6 +720,7 @@ class TestFrequencySheetOrder:
         expected_order = [
             "Gating_Strategy",
             "Keywords",
+            "Compensation",
             "Counts_All",
             "Counts_Selected",
             "Frequencies_All",
@@ -758,6 +766,7 @@ class TestFrequencySheetOrder:
         expected_order = [
             "Gating_Strategy",
             "Keywords",
+            "Compensation",
             "Counts_All",
             "Counts_Selected",
             "Frequencies_All",
@@ -808,6 +817,7 @@ class TestFrequencySheetOrder:
             "Gating_Strategy",
             "Keywords",
             "Keywords_Wide",
+            "Compensation",
             "Counts_All",
             "Counts_Selected",
             "Frequencies_All",

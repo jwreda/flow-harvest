@@ -31,6 +31,7 @@ class SampleSelectionModel(QStandardItemModel):
     COLUMN_SAMPLE = 0
     COLUMN_EVENTS = 1
     COLUMN_STATUS = 2
+    COLUMN_SCALE_FACTOR = 3
 
     # Signal emitted when sample selection changes
     selectionChanged = pyqtSignal(str, bool)  # sample_id, is_selected
@@ -57,6 +58,10 @@ class SampleSelectionModel(QStandardItemModel):
         # Compensation assignments with colors (new: from WSP parsing)
         self._compensation_assignments: Dict[str, SampleCompensationAssignment] = {}
 
+        # Scale factor state
+        self._scale_factors: Dict[str, float] = {}
+        self._scale_factor_enabled: bool = False
+
         # Prevent recursive updates during sync
         self._updating = False
 
@@ -67,13 +72,17 @@ class SampleSelectionModel(QStandardItemModel):
         """Clear all samples from the model."""
         self._updating = True
         self.clear()
-        self.setHorizontalHeaderLabels(["Sample", "Events", "Comp"])
+        if self._scale_factor_enabled:
+            self.setHorizontalHeaderLabels(["Sample", "Events", "Comp", "Scale Factor"])
+        else:
+            self.setHorizontalHeaderLabels(["Sample", "Events", "Comp"])
         self._selection_state.clear()
         self._sample_items.clear()
         self._group_items.clear()
         self._samples.clear()
         self._compensation_status.clear()
         self._compensation_assignments.clear()
+        self._scale_factors.clear()
         self._updating = False
 
     def populate_from_groups(
@@ -148,6 +157,13 @@ class SampleSelectionModel(QStandardItemModel):
 
         # Update all group tri-states
         self._update_all_group_states()
+
+        # Rebuild scale factor column if enabled
+        if self._scale_factor_enabled:
+            for sample_id in self._samples:
+                if sample_id not in self._scale_factors:
+                    self._scale_factors[sample_id] = 1.0
+            self._rebuild_scale_factor_column()
 
         logger.info(f"Populated sample selection: {len(all_samples)} samples in {len(groups)} groups")
 
@@ -276,8 +292,13 @@ class SampleSelectionModel(QStandardItemModel):
         return item
 
     def _on_item_changed(self, item: QStandardItem) -> None:
-        """Handle item checkbox changes."""
+        """Handle item checkbox changes and scale factor edits."""
         if self._updating:
+            return
+
+        # Handle scale factor column edits
+        if item.column() == self.COLUMN_SCALE_FACTOR and self._scale_factor_enabled:
+            self._handle_scale_factor_edit(item)
             return
 
         self._updating = True
@@ -400,6 +421,142 @@ class SampleSelectionModel(QStandardItemModel):
         finally:
             self._updating = False
         self._update_all_group_states()
+
+    # --- Scale Factor Methods ---
+
+    def set_scale_factor_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable the scale factor column.
+
+        When enabling, initializes all samples to 1.0 if not already set,
+        then rebuilds the column and updates headers.
+
+        Args:
+            enabled: Whether scale factor column should be visible and active
+        """
+        self._scale_factor_enabled = enabled
+
+        if enabled:
+            # Initialize scale factors for any samples not yet set
+            for sample_id in self._samples:
+                if sample_id not in self._scale_factors:
+                    self._scale_factors[sample_id] = 1.0
+            self._rebuild_scale_factor_column()
+        self._update_headers()
+
+    def _rebuild_scale_factor_column(self) -> None:
+        """Add or update QStandardItem for column 3 (scale factor) on all sample rows."""
+        self._updating = True
+        try:
+            for sample_id, items in self._sample_items.items():
+                factor = self._scale_factors.get(sample_id, 1.0)
+                for item in items:
+                    parent = item.parent()
+                    if parent:
+                        row = item.row()
+                        existing = parent.child(row, self.COLUMN_SCALE_FACTOR)
+                        if existing:
+                            existing.setText(f"{factor:g}")
+                        else:
+                            sf_item = QStandardItem(f"{factor:g}")
+                            sf_item.setEditable(True)
+                            sf_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                            sf_item.setData(sample_id, Qt.UserRole)
+                            parent.setChild(row, self.COLUMN_SCALE_FACTOR, sf_item)
+                    else:
+                        # Root-level item
+                        row_index = item.row()
+                        existing = self.item(row_index, self.COLUMN_SCALE_FACTOR)
+                        if existing:
+                            existing.setText(f"{factor:g}")
+                        else:
+                            sf_item = QStandardItem(f"{factor:g}")
+                            sf_item.setEditable(True)
+                            sf_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                            sf_item.setData(sample_id, Qt.UserRole)
+                            self.setItem(row_index, self.COLUMN_SCALE_FACTOR, sf_item)
+        finally:
+            self._updating = False
+
+    def _update_headers(self) -> None:
+        """Set column headers based on whether scale factor is enabled."""
+        if self._scale_factor_enabled:
+            self.setHorizontalHeaderLabels(["Sample", "Events", "Comp", "Scale Factor"])
+        else:
+            self.setHorizontalHeaderLabels(["Sample", "Events", "Comp"])
+
+    def _handle_scale_factor_edit(self, item: QStandardItem) -> None:
+        """
+        Validate and apply a scale factor edit from the user.
+
+        Parses the new text as a float, rejects non-positive values,
+        and syncs the factor across all instances of the same sample.
+        """
+        sample_id = item.data(Qt.UserRole)
+        if not sample_id:
+            return
+
+        text = item.text().strip()
+        previous_value = self._scale_factors.get(sample_id, 1.0)
+
+        try:
+            new_value = float(text)
+            if new_value <= 0:
+                raise ValueError("Scale factor must be positive")
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid scale factor '{text}' for sample '{sample_id}', reverting to {previous_value}")
+            self._updating = True
+            try:
+                item.setText(f"{previous_value:g}")
+            finally:
+                self._updating = False
+            return
+
+        # Store the validated value
+        self._scale_factors[sample_id] = new_value
+
+        # Sync across all instances of this sample
+        self._updating = True
+        try:
+            for sample_item in self._sample_items.get(sample_id, []):
+                parent = sample_item.parent()
+                if parent:
+                    sf_item = parent.child(sample_item.row(), self.COLUMN_SCALE_FACTOR)
+                    if sf_item and sf_item is not item:
+                        sf_item.setText(f"{new_value:g}")
+                else:
+                    sf_item = self.item(sample_item.row(), self.COLUMN_SCALE_FACTOR)
+                    if sf_item and sf_item is not item:
+                        sf_item.setText(f"{new_value:g}")
+        finally:
+            self._updating = False
+
+        logger.debug(f"Scale factor for '{sample_id}' set to {new_value}")
+
+    def get_scale_factors(self) -> Dict[str, float]:
+        """
+        Get scale factors for all samples.
+
+        Returns:
+            Dict mapping sample_id to scale factor. Empty dict if scale factor is disabled.
+        """
+        if not self._scale_factor_enabled:
+            return {}
+        return dict(self._scale_factors)
+
+    def get_scale_factor(self, sample_id: str) -> float:
+        """
+        Get scale factor for a single sample.
+
+        Args:
+            sample_id: The sample to look up
+
+        Returns:
+            The scale factor (1.0 if disabled or not set)
+        """
+        if not self._scale_factor_enabled:
+            return 1.0
+        return self._scale_factors.get(sample_id, 1.0)
 
     def get_selection_summary(self) -> Dict[str, int]:
         """Get summary of selection state."""
@@ -545,6 +702,13 @@ class SampleSelectionModel(QStandardItemModel):
 
         # Update all group tri-states
         self._update_all_group_states()
+
+        # Rebuild scale factor column if enabled
+        if self._scale_factor_enabled:
+            for sample_id in self._samples:
+                if sample_id not in self._scale_factors:
+                    self._scale_factors[sample_id] = 1.0
+            self._rebuild_scale_factor_column()
 
         logger.info(f"Populated sample selection from metadata: {len(samples)} samples in {len(groups)} groups")
 

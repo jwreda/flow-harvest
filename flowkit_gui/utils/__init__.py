@@ -5,6 +5,7 @@ from .logging_config import setup_logging, get_logger
 from .animations import AnimatedButton, HoverMixin, FadeTransition
 from .cache import MemoryBoundedLRUCache
 from .cancellation import CancellationToken, CancellationError
+from .memory_utils import get_memory_info, check_memory_available, estimate_export_memory
 
 __all__ = [
     "calculate_mean",
@@ -18,4 +19,7 @@ __all__ = [
     "MemoryBoundedLRUCache",
     "CancellationToken",
     "CancellationError",
+    "get_memory_info",
+    "check_memory_available",
+    "estimate_export_memory",
 ]

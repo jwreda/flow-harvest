@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter
+from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtSvg import QSvgRenderer
 
@@ -129,13 +129,26 @@ def load_stylesheet() -> str:
     return generate_stylesheet()
 
 
-def get_icon(name: str, color: Optional[str] = None) -> QIcon:
+# Module-level icon cache
+_icon_cache: Dict[tuple, QIcon] = {}
+
+
+def clear_icon_cache():
+    """Clear the icon cache. Call when theme changes."""
+    _icon_cache.clear()
+
+
+def get_icon(name: str, color: Optional[str] = None, size: int = 64) -> QIcon:
     """
     Load an SVG icon from resources, optionally tinting it.
 
+    If the SVG uses stroke="currentColor" (Lucide icons) and no color
+    is specified, the theme's primary accent color is applied automatically.
+
     Args:
         name: Icon name (without .svg extension)
-        color: Optional hex color to tint the icon
+        color: Optional hex color to tint the icon (e.g., "#E91E8C")
+        size: Pixmap size in pixels (default 64)
 
     Returns:
         QIcon loaded from resources
@@ -145,19 +158,48 @@ def get_icon(name: str, color: Optional[str] = None) -> QIcon:
     if not icon_path.exists():
         return QIcon()
 
+    # Auto-tint SVGs that use currentColor (e.g., Lucide icons)
     if color is None:
-        return QIcon(str(icon_path))
+        try:
+            svg_text = icon_path.read_text()
+            if 'currentColor' in svg_text:
+                colors = get_colors()
+                color = colors.get("primary", "#E91E8C")
+        except Exception:
+            pass
 
-    # Load and tint the SVG
+    # Check cache
+    cache_key = (name, color, size)
+    if cache_key in _icon_cache:
+        return _icon_cache[cache_key]
+
+    if color is None:
+        icon = QIcon(str(icon_path))
+        _icon_cache[cache_key] = icon
+        return icon
+
+    # Render SVG to pixmap
     renderer = QSvgRenderer(str(icon_path))
-    pixmap = QPixmap(QSize(64, 64))
+    pixmap = QPixmap(QSize(size, size))
     pixmap.fill(Qt.transparent)
 
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
 
-    return QIcon(pixmap)
+    # Apply color tint using composition mode
+    tinted = QPixmap(pixmap.size())
+    tinted.fill(Qt.transparent)
+
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), QColor(color))
+    painter.end()
+
+    icon = QIcon(tinted)
+    _icon_cache[cache_key] = icon
+    return icon
 
 
 def apply_theme(app: QApplication) -> None:
@@ -184,6 +226,7 @@ def apply_theme(app: QApplication) -> None:
 
     # Connect theme changes to stylesheet updates
     def on_theme_changed(theme: str):
+        clear_icon_cache()  # Clear cache so icons re-render with new theme colors
         stylesheet = generate_stylesheet(theme)
         if stylesheet:
             app.setStyleSheet(stylesheet)

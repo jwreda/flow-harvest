@@ -67,10 +67,113 @@ def check_flowkit_version():
         return True, None
 
 
+def _install_global_exception_handler(app):
+    """Install global exception handler for uncaught exceptions.
+
+    Provides user-friendly crash dialog, crash log file, and
+    copy-to-clipboard functionality instead of silent crashes.
+    """
+    import traceback
+    import platform
+    from datetime import datetime
+    from pathlib import Path
+
+    def exception_hook(exc_type, exc_value, exc_traceback):
+        # Don't catch KeyboardInterrupt
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # Format exception
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        error_summary = f"{exc_type.__name__}: {exc_value}"
+
+        error_details = (
+            f"FlowKit GUI Crash Report\n"
+            f"{'=' * 60}\n"
+            f"Time: {timestamp}\n"
+            f"Version: {app.applicationVersion()}\n"
+            f"Platform: {platform.system()} {platform.release()}\n"
+            f"Python: {sys.version.split()[0]}\n"
+            f"\n{tb_text}"
+        )
+
+        # Write to crash log
+        crash_log_dir = Path.home() / ".flowkit_gui"
+        crash_log_dir.mkdir(exist_ok=True)
+        crash_log_path = crash_log_dir / "flowkit_crash.log"
+        try:
+            with open(crash_log_path, "a") as f:
+                f.write(f"\n\n{error_details}\n{'=' * 60}\n")
+        except Exception:
+            pass
+
+        # Also log to debug log
+        try:
+            import logging
+            logger = logging.getLogger("flowkit_gui")
+            logger.critical(f"UNHANDLED EXCEPTION: {error_summary}\n{tb_text}")
+        except Exception:
+            pass
+
+        # Show crash dialog
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton
+        from PyQt5.QtCore import Qt, QTimer
+
+        dialog = QDialog()
+        dialog.setWindowTitle("FlowKit GUI — Unexpected Error")
+        dialog.setModal(True)
+        dialog.resize(650, 450)
+
+        layout = QVBoxLayout(dialog)
+
+        msg = QLabel(
+            f"<b>FlowKit GUI encountered an unexpected error:</b><br><br>"
+            f"<code>{error_summary}</code><br><br>"
+            f"Error details saved to:<br>"
+            f"<code>{crash_log_path}</code>"
+        )
+        msg.setWordWrap(True)
+        msg.setTextFormat(Qt.RichText)
+        layout.addWidget(msg)
+
+        details = QTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(error_details)
+        details.setMaximumHeight(250)
+        layout.addWidget(details)
+
+        btn_layout = QHBoxLayout()
+
+        copy_btn = QPushButton("Copy to Clipboard")
+        def copy_details():
+            app.clipboard().setText(error_details)
+            copy_btn.setText("Copied!")
+            QTimer.singleShot(2000, lambda: copy_btn.setText("Copy to Clipboard"))
+        copy_btn.clicked.connect(copy_details)
+        btn_layout.addWidget(copy_btn)
+
+        btn_layout.addStretch()
+
+        close_btn = QPushButton("Close Application")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+        dialog.exec_()
+        sys.exit(1)
+
+    sys.excepthook = exception_hook
+
+
 def main():
     """Application entry point."""
     # Ensure all dependencies are installed before importing modules that need them
-    ensure_dependencies()
+    if not getattr(sys, 'frozen', False):
+        ensure_dependencies()
 
     from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import Qt, QTimer, QEventLoop
@@ -90,6 +193,9 @@ def main():
 
     # Apply the pink theme with light/dark mode support
     apply_theme(app)
+
+    # Install global exception handler for crash reporting
+    _install_global_exception_handler(app)
 
     # macOS-specific: Activate app BEFORE showing any windows
     # This is critical when launching from scripts/Finder where app starts "in background"

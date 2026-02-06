@@ -81,6 +81,7 @@ class StatisticsModel:
         # Structure: {sample_id: {gate_id: GateStatistics}}
         self._warnings: List[str] = []  # Collect warnings during calculation
         self._normalized_counts_df: Optional[pd.DataFrame] = None  # Volume-normalized counts
+        self._bead_normalized_df: Optional[pd.DataFrame] = None  # Bead-normalized counts
 
     def calculate_statistics(
         self,
@@ -264,7 +265,8 @@ class StatisticsModel:
         channels: List[str],
         metrics: List[MFIMetric],
         include_keywords: bool = True,
-        include_gate_stats: bool = True
+        include_gate_stats: bool = True,
+        scale_factors: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
         """
         Generate statistics DataFrame in wide format.
@@ -276,6 +278,8 @@ class StatisticsModel:
             include_keywords: Whether to include sample keywords
             include_gate_stats: If True, include count/%parent/%total columns.
                                If False, only include MFI columns (for MFI-only sheets).
+            scale_factors: Optional dict of sample_id -> scale factor. When provided,
+                          adds a scale_factor column and scaled_count columns for each gate.
 
         Returns:
             DataFrame with one row per sample, columns for each gate/metric combination
@@ -292,6 +296,10 @@ class StatisticsModel:
                 'sample_name': sample.name,
             }
 
+            # Add scale factor column if provided
+            if scale_factors:
+                row['scale_factor'] = scale_factors.get(sample_id, 1.0)
+
             # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
@@ -307,6 +315,10 @@ class StatisticsModel:
                     # Note: %total is excluded per user feedback - not commonly used
                     if include_gate_stats:
                         row[f"{gate_id}_count"] = stats.event_count
+                        # Add scaled count if scale factors provided
+                        if scale_factors:
+                            factor = scale_factors.get(sample_id, 1.0)
+                            row[f"{gate_id}_scaled_count"] = stats.event_count * factor
                         row[f"{gate_id}_%parent"] = stats.percent_of_parent
 
                     # MFI columns
@@ -328,7 +340,8 @@ class StatisticsModel:
         metrics: List[MFIMetric],
         include_keywords: bool = True,
         include_gate_stats: bool = True,
-        all_gate_ids: Optional[List[str]] = None
+        all_gate_ids: Optional[List[str]] = None,
+        scale_factors: Optional[Dict[str, float]] = None
     ) -> pd.DataFrame:
         """
         Generate statistics DataFrame with sparse MFI columns.
@@ -344,6 +357,8 @@ class StatisticsModel:
                                If False, only include MFI columns (for MFI-only sheets).
             all_gate_ids: List of all gate IDs for gate stats. If provided and include_gate_stats=True,
                          gate stats are included for ALL these gates. If None, only gates in selected_pairs.
+            scale_factors: Optional dict of sample_id -> scale factor. When provided,
+                          adds a scale_factor column and scaled_count columns for each gate.
 
         Returns:
             DataFrame with one row per sample, sparse MFI columns for selected pairs only
@@ -370,6 +385,10 @@ class StatisticsModel:
                 'sample_name': sample.name,
             }
 
+            # Add scale factor column if provided
+            if scale_factors:
+                row['scale_factor'] = scale_factors.get(sample_id, 1.0)
+
             # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
@@ -384,6 +403,10 @@ class StatisticsModel:
 
                     # Count and percent columns
                     row[f"{gate_id}_count"] = stats.event_count
+                    # Add scaled count if scale factors provided
+                    if scale_factors:
+                        factor = scale_factors.get(sample_id, 1.0)
+                        row[f"{gate_id}_scaled_count"] = stats.event_count * factor
                     row[f"{gate_id}_%parent"] = stats.percent_of_parent
 
             # Add MFI columns ONLY for selected (gate_id, channel) pairs
@@ -960,3 +983,178 @@ class StatisticsModel:
             base = f"Counts_per_{int(denominator)}uL"
 
         return f"{base}_All" if include_all else base
+
+    # --- Bead Normalization ---
+
+    # Threshold below which bead counts are considered statistically unreliable
+    LOW_BEAD_COUNT_THRESHOLD = 50
+
+    def calculate_bead_normalized_counts(
+        self,
+        bead_gate_id: str,
+        user_number: float,
+        mode: str = "per_n_beads",
+        gate_ids: Optional[List[str]] = None,
+        sample_ids: Optional[List[str]] = None
+    ) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Calculate bead-normalized counts.
+
+        Formula: normalized = (cell_count_in_gate / bead_count) * user_number
+
+        For "per_n_beads" mode (Mode A):
+            e.g., CD4+ T cells per 1000 beads
+
+        For "per_well" mode (Mode B):
+            e.g., CD4+ T cells per well (user_number = beads added per well)
+
+        Args:
+            bead_gate_id: Gate ID for the counting beads population
+            user_number: Denominator for "per N beads" or beads per well
+            mode: "per_n_beads" or "per_well"
+            gate_ids: Gates to normalize. None = all gates from statistics.
+            sample_ids: Samples to include. None = all from _included_samples.
+
+        Returns:
+            Tuple of (DataFrame with normalized counts, list of warnings)
+
+        Raises:
+            ValueError: If calculate_statistics() was not called first
+        """
+        if not self._statistics:
+            raise ValueError("Must call calculate_statistics() before calculate_bead_normalized_counts()")
+
+        warnings = []
+
+        # Determine which samples to process
+        if sample_ids is not None:
+            sample_id_set = set(sample_ids)
+            samples = [s for s in getattr(self, '_included_samples', self._workspace.samples)
+                       if s.sample_id in sample_id_set]
+        else:
+            samples = getattr(self, '_included_samples', self._workspace.samples)
+
+        # Determine which gates to include
+        if gate_ids is None:
+            gate_ids_set = set()
+            for sample_stats in self._statistics.values():
+                gate_ids_set.update(sample_stats.keys())
+            gate_ids = sorted(gate_ids_set)
+
+        logger.info(
+            f"Calculating bead-normalized counts: {len(samples)} samples, "
+            f"{len(gate_ids)} gates, bead_gate={bead_gate_id}, "
+            f"user_number={user_number}, mode={mode}"
+        )
+
+        rows = []
+
+        for sample in samples:
+            sample_id = sample.sample_id
+
+            row = {
+                'sample_id': sample_id,
+                'sample_name': sample.name,
+            }
+
+            # Get bead count for this sample
+            bead_count = None
+            if sample_id in self._statistics and bead_gate_id in self._statistics[sample_id]:
+                bead_stats = self._statistics[sample_id][bead_gate_id]
+                bead_count = bead_stats.event_count
+            else:
+                warning = (
+                    f"Sample '{sample.name}' ({sample_id}): "
+                    f"bead gate '{bead_gate_id}' not found in statistics"
+                )
+                warnings.append(warning)
+                logger.warning(warning)
+
+            row['bead_count'] = bead_count if bead_count is not None else float('nan')
+
+            # Handle missing or zero bead count
+            if bead_count is None:
+                # Already warned above; fill with NaN
+                for gate_id in gate_ids:
+                    row[f"{gate_id}_bead_norm"] = float('nan')
+                rows.append(row)
+                continue
+
+            if bead_count == 0:
+                warning = (
+                    f"Sample '{sample.name}' ({sample_id}): "
+                    f"bead count is 0 - cannot normalize (division by zero)"
+                )
+                warnings.append(warning)
+                logger.warning(warning)
+                for gate_id in gate_ids:
+                    row[f"{gate_id}_bead_norm"] = float('nan')
+                rows.append(row)
+                continue
+
+            if bead_count < self.LOW_BEAD_COUNT_THRESHOLD:
+                warning = (
+                    f"Sample '{sample.name}' ({sample_id}): "
+                    f"low bead count ({bead_count}) - results may be statistically unreliable"
+                )
+                warnings.append(warning)
+                logger.warning(warning)
+
+            # Calculate normalized count for each gate
+            if sample_id in self._statistics:
+                for gate_id in gate_ids:
+                    if gate_id in self._statistics[sample_id]:
+                        stats = self._statistics[sample_id][gate_id]
+                        raw_count = stats.event_count
+                        normalized = (raw_count / bead_count) * user_number
+                        row[f"{gate_id}_bead_norm"] = normalized
+                    else:
+                        row[f"{gate_id}_bead_norm"] = 0.0
+            else:
+                for gate_id in gate_ids:
+                    row[f"{gate_id}_bead_norm"] = 0.0
+
+            rows.append(row)
+
+        self._bead_normalized_df = pd.DataFrame(rows)
+        logger.info(
+            f"Created bead-normalized counts DataFrame: {len(rows)} samples, "
+            f"{len(warnings)} warnings"
+        )
+
+        # Add warnings to the model's warning list
+        self._warnings.extend(warnings)
+
+        return self._bead_normalized_df, warnings
+
+    @property
+    def bead_normalized_df(self) -> Optional[pd.DataFrame]:
+        """Returns the calculated bead-normalized counts DataFrame."""
+        return self._bead_normalized_df
+
+    @staticmethod
+    def get_bead_sheet_name(user_number: float, mode: str = "per_n_beads") -> str:
+        """
+        Generate descriptive sheet name for bead-normalized counts.
+
+        Excel sheet names have a 31-character limit.
+
+        Args:
+            user_number: The user-provided number
+            mode: "per_n_beads" or "per_well"
+
+        Returns:
+            Sheet name like "Bead_Norm (per 1000 beads)" or
+            "Bead_Norm (50000 beads/well)", truncated to 31 chars
+        """
+        n = int(user_number)
+        if mode == "per_well":
+            name = f"Bead_Norm ({n} beads/well)"
+        else:
+            name = f"Bead_Norm (per {n} beads)"
+
+        # Excel sheet name limit is 31 characters
+        if len(name) > 31:
+            name = name[:31]
+
+        return name

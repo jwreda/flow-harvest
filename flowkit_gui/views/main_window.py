@@ -37,6 +37,7 @@ from .styled_tree_delegate import AccentedTreeItemDelegate
 from .colored_gate_tree_delegate import ColoredGateTreeDelegate
 from .export_summary_dialog import ExportSummaryDialog
 from ..exporters.xlsx_exporter import XLSXExporter
+from ..exporters.export_config import ExportConfig
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
 from ..utils.theme_manager import ThemeMode, get_theme_manager
@@ -45,6 +46,9 @@ from ..utils.fcs_discovery import (
     discover_fcs_files, get_fcs_file_list, ProcessingLevel, DiscoveryResult
 )
 from ..utils.cancellation import CancellationToken, CancellationError
+from ..utils.memory_utils import check_memory_available, estimate_export_memory
+from ..utils.settings_manager import get_settings
+from ..config import defaults as config_defaults
 from ..config import FCS_MAX_SEARCH_DEPTH
 
 # Initialize logging
@@ -585,6 +589,18 @@ class MainWindow(QMainWindow):
 
         bottom_layout.addSpacing(20)
 
+        # Scale factor checkbox
+        self._scale_factor_checkbox = QCheckBox("Scale factor")
+        self._scale_factor_checkbox.setChecked(False)
+        self._scale_factor_checkbox.setToolTip(
+            "Add per-sample scale factor column. Default 1.0, manually editable. "
+            "Multiplied into exported counts."
+        )
+        bottom_layout.addWidget(self._scale_factor_checkbox)
+        self._scale_factor_checkbox.toggled.connect(self._on_scale_factor_toggled)
+
+        bottom_layout.addSpacing(20)
+
         self._main_export_btn = AnimatedButton("  Export to XLSX", primary=True)
         self._main_export_btn.setIcon(get_icon("sparkles-arrow"))
         self._main_export_btn.setObjectName("mainExportButton")
@@ -596,6 +612,64 @@ class MainWindow(QMainWindow):
 
         bottom_layout.addStretch()
         main_layout.addLayout(bottom_layout)
+
+        # Bottom panel row 2 - Bead normalization controls
+        bottom_layout_2 = QHBoxLayout()
+        bottom_layout_2.addStretch()
+
+        # Bead normalization checkbox
+        self._bead_normalize_checkbox = QCheckBox("Normalize by counting beads")
+        self._bead_normalize_checkbox.setChecked(False)
+        self._bead_normalize_checkbox.setToolTip(
+            "Export counts normalized by counting beads gate"
+        )
+        bottom_layout_2.addWidget(self._bead_normalize_checkbox)
+
+        # Bead gate dropdown
+        bead_gate_label = QLabel("Bead gate:")
+        bottom_layout_2.addWidget(bead_gate_label)
+
+        self._bead_gate_combo = QComboBox()
+        self._bead_gate_combo.setMinimumWidth(150)
+        self._bead_gate_combo.setEnabled(False)
+        self._bead_gate_combo.setToolTip(
+            "Select the gate that identifies counting beads"
+        )
+        bottom_layout_2.addWidget(self._bead_gate_combo)
+
+        bottom_layout_2.addSpacing(10)
+
+        # Radio buttons for bead normalization mode
+        self._bead_mode_group = QButtonGroup(self)
+        self._bead_per_n_radio = QRadioButton("Per N beads")
+        self._bead_per_n_radio.setChecked(True)
+        self._bead_per_n_radio.setEnabled(False)
+        self._bead_per_well_radio = QRadioButton("Per well")
+        self._bead_per_well_radio.setEnabled(False)
+        self._bead_mode_group.addButton(self._bead_per_n_radio)
+        self._bead_mode_group.addButton(self._bead_per_well_radio)
+        bottom_layout_2.addWidget(self._bead_per_n_radio)
+        bottom_layout_2.addWidget(self._bead_per_well_radio)
+
+        # Bead number spinbox
+        self._bead_number_spin = QSpinBox()
+        self._bead_number_spin.setRange(1, 1000000)
+        self._bead_number_spin.setValue(1000)
+        self._bead_number_spin.setEnabled(False)
+        self._bead_number_spin.setToolTip(
+            "Number of beads (e.g., 1000 for 'per 1000 beads' or 50000 for beads per well)"
+        )
+        self._bead_number_spin.setMinimumWidth(100)
+        bottom_layout_2.addWidget(self._bead_number_spin)
+
+        # Connect bead checkbox to enable/disable child controls
+        self._bead_normalize_checkbox.toggled.connect(self._on_bead_normalize_toggled)
+
+        # Connect radio buttons to update default spinbox value
+        self._bead_per_n_radio.toggled.connect(self._on_bead_mode_changed)
+
+        bottom_layout_2.addStretch()
+        main_layout.addLayout(bottom_layout_2)
 
     def _create_gate_panel(self) -> QWidget:
         """Create the gate tree panel."""
@@ -681,7 +755,7 @@ class MainWindow(QMainWindow):
         # Tab 2: Keywords (for export selection)
         self._tab_widget.addTab(
             self._create_keywords_export_tab(),
-            get_icon("sample"),  # Reuse sample icon
+            get_icon("dna"),
             "Keywords"
         )
 
@@ -736,6 +810,8 @@ class MainWindow(QMainWindow):
         # Set initial column widths
         self._sample_selection_tree.setColumnWidth(0, 185)  # Sample column
         self._sample_selection_tree.setColumnWidth(2, 40)   # Comp column
+        # Hide scale factor column by default (shown when checkbox is toggled)
+        self._sample_selection_tree.hideColumn(SampleSelectionModel.COLUMN_SCALE_FACTOR)
 
         sample_selection_layout.addWidget(self._sample_selection_tree)
 
@@ -1036,6 +1112,115 @@ class MainWindow(QMainWindow):
 
         norm_layout.addStretch()
         layout.addWidget(norm_group)
+
+        # Performance Mode settings
+        perf_group = QGroupBox("Performance Mode")
+        perf_layout = QVBoxLayout(perf_group)
+
+        # Preset radio buttons
+        self._perf_btn_group = QButtonGroup(self)
+
+        self._perf_normal_radio = QRadioButton("Normal (Recommended)")
+        self._perf_normal_radio.setChecked(True)
+        self._perf_normal_radio.setToolTip(
+            "Cache: 4096 MB, Batch: 10, GC every 5, Workers: Auto"
+        )
+        self._perf_btn_group.addButton(self._perf_normal_radio, 0)
+        perf_layout.addWidget(self._perf_normal_radio)
+
+        self._perf_low_radio = QRadioButton("Low Resource")
+        self._perf_low_radio.setToolTip(
+            "Cache: 1024 MB, Batch: 3, GC every 2, Workers: 1"
+        )
+        self._perf_btn_group.addButton(self._perf_low_radio, 1)
+        perf_layout.addWidget(self._perf_low_radio)
+
+        self._perf_minimal_radio = QRadioButton("Minimal (Large Workspaces)")
+        self._perf_minimal_radio.setToolTip(
+            "Cache: 512 MB, Batch: 2, GC every 1, Workers: 1"
+        )
+        self._perf_btn_group.addButton(self._perf_minimal_radio, 2)
+        perf_layout.addWidget(self._perf_minimal_radio)
+
+        # Connect preset changes to update advanced fields
+        self._perf_btn_group.buttonClicked.connect(self._on_perf_preset_changed)
+
+        # "Show Advanced Settings" checkbox
+        self._show_advanced_check = QCheckBox("Show Advanced Settings")
+        self._show_advanced_check.setChecked(False)
+        perf_layout.addWidget(self._show_advanced_check)
+
+        # Advanced settings frame (hidden by default)
+        self._advanced_frame = QFrame()
+        advanced_layout = QGridLayout(self._advanced_frame)
+        advanced_layout.setContentsMargins(20, 5, 5, 5)
+
+        # Cache Limit
+        advanced_layout.addWidget(QLabel("Cache Limit:"), 0, 0)
+        self._cache_limit_spin = QSpinBox()
+        self._cache_limit_spin.setRange(256, 16384)
+        self._cache_limit_spin.setValue(4096)
+        self._cache_limit_spin.setSuffix(" MB")
+        self._cache_limit_spin.setToolTip("Maximum memory for LRU caches (256-16384 MB)")
+        advanced_layout.addWidget(self._cache_limit_spin, 0, 1)
+
+        # Batch Size
+        advanced_layout.addWidget(QLabel("Batch Size:"), 1, 0)
+        self._batch_size_spin = QSpinBox()
+        self._batch_size_spin.setRange(1, 50)
+        self._batch_size_spin.setValue(10)
+        self._batch_size_spin.setToolTip("Samples processed per batch during export (1-50)")
+        advanced_layout.addWidget(self._batch_size_spin, 1, 1)
+
+        # GC Interval
+        advanced_layout.addWidget(QLabel("GC Interval:"), 2, 0)
+        self._gc_interval_spin = QSpinBox()
+        self._gc_interval_spin.setRange(1, 20)
+        self._gc_interval_spin.setValue(5)
+        self._gc_interval_spin.setToolTip(
+            "Garbage collection every N samples (1-20)\n"
+            "Lower values free memory sooner but slow processing"
+        )
+        advanced_layout.addWidget(self._gc_interval_spin, 2, 1)
+
+        # Max Workers
+        advanced_layout.addWidget(QLabel("Max Workers:"), 3, 0)
+        self._max_workers_spin = QSpinBox()
+        self._max_workers_spin.setRange(0, 16)
+        self._max_workers_spin.setValue(0)
+        self._max_workers_spin.setSpecialValueText("Auto")
+        self._max_workers_spin.setToolTip(
+            "Maximum parallel workers for sample analysis (0=Auto)\n"
+            "Auto uses min(4, CPU count). Set to 1 on low-memory machines."
+        )
+        advanced_layout.addWidget(self._max_workers_spin, 3, 1)
+
+        self._advanced_frame.setVisible(False)
+        perf_layout.addWidget(self._advanced_frame)
+
+        # Connect show/hide toggle
+        self._show_advanced_check.toggled.connect(self._advanced_frame.setVisible)
+
+        # Apply button
+        apply_layout = QHBoxLayout()
+        self._perf_apply_btn = SpecularHoverButton("  Apply", primary=True)
+        self._perf_apply_btn.setIcon(get_icon("settings"))
+        self._perf_apply_btn.setToolTip("Apply performance settings and update caches")
+        self._perf_apply_btn.clicked.connect(self._on_apply_performance_settings)
+        apply_layout.addWidget(self._perf_apply_btn)
+
+        # Status label
+        self._perf_status_label = QLabel("Current mode: Normal")
+        self._perf_status_label.setStyleSheet("color: gray; font-style: italic;")
+        apply_layout.addWidget(self._perf_status_label)
+        apply_layout.addStretch()
+
+        perf_layout.addLayout(apply_layout)
+
+        layout.addWidget(perf_group)
+
+        # Load saved performance settings
+        self._load_performance_settings()
 
         # Export options
         export_group = QGroupBox("Export Options")
@@ -1485,6 +1670,7 @@ class MainWindow(QMainWindow):
 
         # Populate UI
         self._populate_gate_tree()
+        self._populate_bead_gate_combo()
 
         # Initialize available gates (all gates available when all samples selected)
         self._available_gate_ids = {g.gate_id for g in self._workspace_model.gates}
@@ -1550,6 +1736,32 @@ class MainWindow(QMainWindow):
         # Build hierarchy (simplified - just flat list for now)
         self._gate_tree_model.populate_from_hierarchy(gates)
         self._gate_tree_view.expandAll()
+
+    def _populate_bead_gate_combo(self):
+        """Populate the bead gate dropdown from workspace gates."""
+        self._bead_gate_combo.clear()
+        self._bead_gate_combo.addItem("-- Select bead gate --", None)
+        for gate_info in self._workspace_model.gates:
+            self._bead_gate_combo.addItem(
+                gate_info.full_path_string,
+                gate_info.gate_id
+            )
+
+    def _on_bead_normalize_toggled(self, checked: bool):
+        """Enable/disable bead normalization child controls."""
+        self._bead_gate_combo.setEnabled(checked)
+        self._bead_per_n_radio.setEnabled(checked)
+        self._bead_per_well_radio.setEnabled(checked)
+        self._bead_number_spin.setEnabled(checked)
+
+    def _on_bead_mode_changed(self, per_n_checked: bool):
+        """Update default spinbox value when bead mode radio changes."""
+        if per_n_checked:
+            # "Per N beads" mode - default 1000
+            self._bead_number_spin.setValue(1000)
+        else:
+            # "Per well" mode - default 50000
+            self._bead_number_spin.setValue(50000)
 
     def _populate_sample_combo(self):
         """Populate sample dropdown."""
@@ -1765,6 +1977,15 @@ class MainWindow(QMainWindow):
         """Invert sample selection."""
         self._sample_selection_model.invert_selection()
         self._update_sample_selection_header()
+
+    def _on_scale_factor_toggled(self, enabled):
+        """Handle scale factor checkbox toggle."""
+        self._sample_selection_model.set_scale_factor_enabled(enabled)
+        if enabled:
+            self._sample_selection_tree.showColumn(SampleSelectionModel.COLUMN_SCALE_FACTOR)
+            self._sample_selection_tree.setColumnWidth(SampleSelectionModel.COLUMN_SCALE_FACTOR, 80)
+        else:
+            self._sample_selection_tree.hideColumn(SampleSelectionModel.COLUMN_SCALE_FACTOR)
 
     def _on_sample_tree_clicked(self, index):
         """Handle click in sample selection tree - update preview."""
@@ -2006,6 +2227,107 @@ class MainWindow(QMainWindow):
         self._index_columns_label.setEnabled(enabled)
         self._index_columns_list.setEnabled(enabled)
 
+    # -------------------------------------------------------------------------
+    # Performance Mode settings
+    # -------------------------------------------------------------------------
+
+    # Preset definitions: (cache_mb, batch_size, gc_interval, max_workers)
+    _PERF_PRESETS = {
+        0: (4096, 10, 5, 0),   # Normal
+        1: (1024, 3, 2, 1),    # Low Resource
+        2: (512, 2, 1, 1),     # Minimal
+    }
+    _PERF_PRESET_NAMES = {0: "Normal", 1: "Low Resource", 2: "Minimal"}
+
+    def _on_perf_preset_changed(self, button):
+        """Update advanced spinboxes when a preset radio button is clicked."""
+        preset_id = self._perf_btn_group.id(button)
+        cache_mb, batch, gc_int, workers = self._PERF_PRESETS.get(preset_id, self._PERF_PRESETS[0])
+        self._cache_limit_spin.setValue(cache_mb)
+        self._batch_size_spin.setValue(batch)
+        self._gc_interval_spin.setValue(gc_int)
+        self._max_workers_spin.setValue(workers)
+
+    def _load_performance_settings(self):
+        """Load saved performance settings from QSettings and apply to UI."""
+        settings = get_settings()
+        preset = settings.get_performance_preset()
+
+        # Select the correct radio button
+        btn = self._perf_btn_group.button(preset)
+        if btn:
+            btn.setChecked(True)
+
+        # Load advanced values
+        self._cache_limit_spin.setValue(settings.get_cache_limit_mb())
+        self._batch_size_spin.setValue(settings.get_batch_size())
+        self._gc_interval_spin.setValue(settings.get_gc_interval())
+        self._max_workers_spin.setValue(settings.get_max_workers())
+
+        # Update status label
+        name = self._PERF_PRESET_NAMES.get(preset, "Normal")
+        self._perf_status_label.setText(f"Current mode: {name}")
+
+        # Apply config defaults at startup
+        self._apply_config_defaults_from_ui()
+
+    def _apply_config_defaults_from_ui(self):
+        """Write the current UI spinbox values into config.defaults module."""
+        config_defaults.CACHE_MEMORY_LIMIT_MB = self._cache_limit_spin.value()
+        config_defaults.BATCH_SIZE = self._batch_size_spin.value()
+        config_defaults.GC_COLLECT_INTERVAL = self._gc_interval_spin.value()
+        workers_val = self._max_workers_spin.value()
+        config_defaults.MAX_PARALLEL_WORKERS = None if workers_val == 0 else workers_val
+
+    def _on_apply_performance_settings(self):
+        """Apply performance settings: persist, update config, update caches."""
+        settings = get_settings()
+        preset = self._perf_btn_group.checkedId()
+
+        # Persist to QSettings
+        settings.set_performance_preset(preset)
+        settings.set_cache_limit_mb(self._cache_limit_spin.value())
+        settings.set_batch_size(self._batch_size_spin.value())
+        settings.set_gc_interval(self._gc_interval_spin.value())
+        settings.set_max_workers(self._max_workers_spin.value())
+        settings.sync()
+
+        # Update config.defaults module values
+        self._apply_config_defaults_from_ui()
+
+        # If workspace is loaded, update live cache limits and clear
+        if self._workspace_model.is_loaded:
+            cache_bytes = self._cache_limit_spin.value() * 1024 * 1024
+            self._workspace_model._event_cache._max_bytes = int(cache_bytes * 0.7)
+            self._workspace_model._membership_cache._max_bytes = int(cache_bytes * 0.3)
+            self._workspace_model.clear_cache()
+            logger.info(
+                f"Updated live caches: event={self._workspace_model._event_cache.memory_limit_mb:.0f}MB, "
+                f"membership={self._workspace_model._membership_cache.memory_limit_mb:.0f}MB"
+            )
+
+        # Update status label
+        name = self._PERF_PRESET_NAMES.get(preset, "Normal")
+        self._perf_status_label.setText(f"Current mode: {name}")
+
+        logger.info(
+            f"Performance settings applied: preset={name}, "
+            f"cache={self._cache_limit_spin.value()}MB, "
+            f"batch={self._batch_size_spin.value()}, "
+            f"gc_interval={self._gc_interval_spin.value()}, "
+            f"workers={self._max_workers_spin.value()}"
+        )
+
+        QMessageBox.information(
+            self,
+            "Settings Applied",
+            f"Performance mode set to: {name}\n\n"
+            f"Cache Limit: {self._cache_limit_spin.value()} MB\n"
+            f"Batch Size: {self._batch_size_spin.value()}\n"
+            f"GC Interval: {self._gc_interval_spin.value()}\n"
+            f"Max Workers: {'Auto' if self._max_workers_spin.value() == 0 else self._max_workers_spin.value()}"
+        )
+
     def _populate_index_columns_list(self):
         """Populate the index columns list with discovered keywords."""
         self._index_columns_list.clear()
@@ -2163,6 +2485,30 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        # Pre-export memory check
+        num_samples = len(selected_sample_ids)
+        num_gates = len(gate_ids_filtered)
+        estimated_mb = estimate_export_memory(num_samples, num_gates)
+        if not check_memory_available(estimated_mb, operation_name="export"):
+            result = QMessageBox.warning(
+                self,
+                "Low Memory Warning",
+                f"This export may require approximately {estimated_mb} MB of memory, "
+                f"but available system memory is low.\n\n"
+                f"Suggestions:\n"
+                f"  - Switch to Low Resource or Minimal mode in Settings > Performance Mode\n"
+                f"  - Close other applications (browser, Zoom, etc.)\n"
+                f"  - Export fewer samples or gates\n\n"
+                f"Continue anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if result == QMessageBox.No:
+                return
+
+        # Disable UI during export to prevent reentrancy from processEvents()
+        self.setEnabled(False)
+
         try:
             # Use filtered gate_ids from the earlier validation
             gate_ids = gate_ids_filtered
@@ -2208,9 +2554,33 @@ class MainWindow(QMainWindow):
             if volume_normalize:
                 logger.info(f"Volume normalization enabled: per {volume_denominator} μL")
 
-            exporter = XLSXExporter(
-                workspace=self._workspace_model,
-                keywords_model=self._keywords_model,
+            # Get bead normalization settings
+            bead_normalize = self._bead_normalize_checkbox.isChecked()
+            bead_gate_id = None
+            bead_user_number = 1000.0
+            bead_mode = "per_n_beads"
+            if bead_normalize:
+                bead_gate_id = self._bead_gate_combo.currentData()
+                bead_user_number = self._bead_number_spin.value()
+                bead_mode = "per_n_beads" if self._bead_per_n_radio.isChecked() else "per_well"
+                if bead_gate_id:
+                    logger.info(
+                        f"Bead normalization enabled: gate={bead_gate_id}, "
+                        f"number={bead_user_number}, mode={bead_mode}"
+                    )
+                else:
+                    # No gate selected - skip bead normalization silently
+                    bead_normalize = False
+                    logger.info("Bead normalization checkbox checked but no gate selected - skipping")
+
+            # Snapshot scale factors at export time for thread safety
+            scale_factors = None
+            if self._scale_factor_checkbox.isChecked():
+                scale_factors = self._sample_selection_model.get_scale_factors()
+                if scale_factors:
+                    logger.info(f"Scale factors enabled for {len(scale_factors)} samples")
+
+            config = ExportConfig(
                 gate_ids=gate_ids,
                 selected_markers=selected_markers,
                 all_markers=all_markers,
@@ -2226,8 +2596,41 @@ class MainWindow(QMainWindow):
                 reference_gate_ids=reference_gate_ids,
                 descendant_depth=descendant_depth,
                 volume_normalize=volume_normalize,
-                volume_denominator=volume_denominator
+                volume_denominator=volume_denominator,
+                bead_normalize=bead_normalize,
+                bead_gate_id=bead_gate_id,
+                bead_user_number=bead_user_number,
+                bead_mode=bead_mode,
+                scale_factors=scale_factors
             )
+
+            exporter = XLSXExporter(
+                workspace=self._workspace_model,
+                keywords_model=self._keywords_model,
+                config=config
+            )
+
+            # Pre-analyze samples to detect failures before export
+            self._workspace_model.analyze_samples(sample_ids=selected_sample_ids)
+
+            # Check for analysis failures
+            failures = self._workspace_model.get_analysis_failures()
+            if failures:
+                failure_list = "\n".join([f"  \u2022 {sid}: {err[:80]}" for sid, err in list(failures.items())[:10]])
+                if len(failures) > 10:
+                    failure_list += f"\n  ... and {len(failures) - 10} more"
+
+                response = QMessageBox.warning(
+                    self,
+                    "Analysis Failures Detected",
+                    f"{len(failures)} sample(s) failed analysis and will have "
+                    f"incomplete statistics (zeros):\n\n{failure_list}\n\n"
+                    f"See flowkit_debug.log for details.\n\nContinue with export?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if response == QMessageBox.No:
+                    return
 
             # Show progress dialog with detailed status
             progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
@@ -2298,6 +2701,8 @@ class MainWindow(QMainWindow):
                 f"Failed to export data:\n{str(e)}"
             )
         finally:
+            # Re-enable UI after export completes
+            self.setEnabled(True)
             # Clear caches after export to free memory for large datasets
             self._workspace_model.clear_cache()
             logger.info("Cleared caches after export")
