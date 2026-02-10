@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QApplication, QSpinBox, QLineEdit
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor, QPixmap, QPainter, QBrush
 
 from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample, SampleCompensationAssignment
 from ..models.gate_tree_model import GateTreeModel, Gate
@@ -32,7 +32,7 @@ from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric
 from ..models.sample_selection_model import SampleSelectionModel
 from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
-from .gate_marker_matrix_view import GateMarkerMatrixView
+from .gate_marker_matrix_view import GateMarkerMatrixView, DEPTH_COLORS
 from .styled_tree_delegate import AccentedTreeItemDelegate
 from .colored_gate_tree_delegate import ColoredGateTreeDelegate
 from .export_summary_dialog import ExportSummaryDialog
@@ -1501,6 +1501,7 @@ class MainWindow(QMainWindow):
         # Repopulate gate tree with full statistics from FCS data
         self._populate_gate_tree()
         self._gate_tree_view.expandAll()
+        self._populate_bead_gate_combo()
 
         # Update Compensation Details panel
         self._update_comp_details_panel()
@@ -1574,6 +1575,7 @@ class MainWindow(QMainWindow):
         # Populate gate tree from metadata (limited info)
         self._populate_gate_tree()
         self._gate_tree_view.expandAll()
+        self._populate_bead_gate_combo()
 
         # Update status
         self._statusbar.showMessage(
@@ -1738,14 +1740,56 @@ class MainWindow(QMainWindow):
         self._gate_tree_view.expandAll()
 
     def _populate_bead_gate_combo(self):
-        """Populate the bead gate dropdown from workspace gates."""
+        """Populate bead gate dropdown with autofiltering and depth dots."""
         self._bead_gate_combo.clear()
         self._bead_gate_combo.addItem("-- Select bead gate --", None)
-        for gate_info in self._workspace_model.gates:
-            self._bead_gate_combo.addItem(
-                gate_info.full_path_string,
-                gate_info.gate_id
+
+        all_gates = self._workspace_model.gates
+        bead_gates = [g for g in all_gates if "bead" in g.name.lower()]
+
+        if bead_gates:
+            gates_to_show = bead_gates
+            self._bead_gate_combo.setToolTip(
+                f"Showing {len(bead_gates)} gate(s) matching 'bead'."
             )
+        else:
+            gates_to_show = all_gates
+            self._bead_gate_combo.setToolTip(
+                "Auto-filtering returned no gates matching 'bead' \u2014 showing all gates."
+            )
+
+        for gate_info in gates_to_show:
+            icon = self._create_depth_dot_icon(gate_info.depth)
+            idx = self._bead_gate_combo.count()
+            self._bead_gate_combo.addItem(icon, gate_info.name, gate_info.gate_id)
+            self._bead_gate_combo.setItemData(idx, gate_info.full_path_string, Qt.ToolTipRole)
+
+    def _create_depth_dot_icon(self, depth: int) -> QIcon:
+        """Create a QIcon with colored depth dots for combo box items."""
+        if depth <= 0:
+            return QIcon()
+
+        DOT_SIZE = 8
+        DOT_SPACING = 2
+        PADDING = 2
+
+        width = depth * (DOT_SIZE + DOT_SPACING) - DOT_SPACING + PADDING * 2
+        height = DOT_SIZE + PADDING * 2
+
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        for i in range(depth):
+            color_idx = i % len(DEPTH_COLORS)
+            painter.setBrush(QBrush(QColor(DEPTH_COLORS[color_idx])))
+            painter.setPen(Qt.NoPen)
+            x = PADDING + i * (DOT_SIZE + DOT_SPACING)
+            painter.drawEllipse(x, PADDING, DOT_SIZE, DOT_SIZE)
+        painter.end()
+
+        return QIcon(pixmap)
 
     def _on_bead_normalize_toggled(self, checked: bool):
         """Enable/disable bead normalization child controls."""
