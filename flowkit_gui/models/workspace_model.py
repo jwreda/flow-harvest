@@ -425,10 +425,54 @@ class WorkspaceModel:
                 self._analyzed_samples.add(sample_id)
                 logger.debug(f"Successfully analyzed sample: {sample_id}")
             except Exception as e:
+                if "Detectors must be a subset" in str(e) or "detectors" in str(e).lower():
+                    logger.warning(
+                        f"Comp mismatch for {sample_id}, retrying without compensation: {e}"
+                    )
+                    if self._retry_analysis_without_comp(sample_id):
+                        self._analyzed_samples.add(sample_id)
+                        return
+
                 logger.warning(f"Failed to analyze sample {sample_id}: {e}")
                 # Track as failed — do NOT mark as analyzed so statistics aren't silently zero
                 with self._failed_samples_lock:
                     self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
+
+    def _retry_analysis_without_comp(self, sample_id: str) -> bool:
+        """Retry sample analysis after stripping incompatible compensation.
+
+        FlowKit embeds compensation transforms in each sample's gating strategy.
+        When the comp matrix detectors don't match the sample channels, analysis
+        fails. This method strips the comp matrices and retries, giving gate
+        counts based on raw (uncompensated) data.
+
+        Returns True if retry succeeded, False otherwise.
+        """
+        try:
+            sample_data = self._workspace._sample_data_lut.get(sample_id)
+            if not sample_data:
+                return False
+
+            gating_strategy = sample_data.get('gating_strategy')
+            if not gating_strategy:
+                return False
+
+            # Clear all comp matrices from gating strategy
+            original_comps = dict(gating_strategy.comp_matrices)
+            gating_strategy.comp_matrices.clear()
+
+            try:
+                self._workspace.analyze_samples(sample_id=sample_id)
+                logger.info(f"Successfully analyzed {sample_id} without compensation")
+                return True
+            except Exception as retry_e:
+                logger.warning(f"Retry without comp also failed for {sample_id}: {retry_e}")
+                # Restore original comp matrices
+                gating_strategy.comp_matrices.update(original_comps)
+                return False
+        except Exception as access_e:
+            logger.debug(f"Cannot access FlowKit internals for {sample_id}: {access_e}")
+            return False
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
         """Get events from cache or load and cache them.
@@ -1198,6 +1242,15 @@ class WorkspaceModel:
                     if progress_callback:
                         progress_callback(batch_start + i + 1, total)
                 except Exception as e:
+                    if "Detectors must be a subset" in str(e) or "detectors" in str(e).lower():
+                        logger.warning(f"Comp mismatch for {sample_id}, retrying without comp")
+                        if self._retry_analysis_without_comp(sample_id):
+                            with self._analyzed_samples_lock:
+                                self._analyzed_samples.add(sample_id)
+                            if progress_callback:
+                                progress_callback(batch_start + i + 1, total)
+                            continue
+
                     logger.error(f"analyze_sample FAILED for {sample_id}: {type(e).__name__}: {e}")
                     import traceback
                     logger.debug(f"Full traceback:\n{traceback.format_exc()}")
@@ -1277,6 +1330,10 @@ class WorkspaceModel:
                 self._workspace.analyze_samples(sample_id=sample_id)
                 return (sample_id, True, "")
             except Exception as e:
+                if "Detectors must be a subset" in str(e) or "detectors" in str(e).lower():
+                    logger.warning(f"Comp mismatch for {sample_id}, retrying without comp")
+                    if self._retry_analysis_without_comp(sample_id):
+                        return (sample_id, True, "")
                 return (sample_id, False, str(e))
 
         try:

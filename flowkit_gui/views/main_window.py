@@ -1483,7 +1483,12 @@ class MainWindow(QMainWindow):
         """Finalize UI after Phase 2 loading (FCS data now available)."""
         # Re-populate UI components that need FCS data
         self._keywords_model.set_samples(self._workspace_model.samples)
+
+        # Block signals during combo population to prevent premature
+        # _on_sample_changed(0) before gate tree is rebuilt
+        self._sample_combo.blockSignals(True)
         self._populate_sample_combo()
+        self._sample_combo.blockSignals(False)
         self._populate_marker_checkboxes()
         self._populate_gate_marker_matrix()
         self._populate_index_columns_list()
@@ -1676,7 +1681,12 @@ class MainWindow(QMainWindow):
 
         # Initialize available gates (all gates available when all samples selected)
         self._available_gate_ids = {g.gate_id for g in self._workspace_model.gates}
+
+        # Block signals during combo population to prevent premature
+        # _on_sample_changed(0) before gate tree is rebuilt
+        self._sample_combo.blockSignals(True)
         self._populate_sample_combo()
+        self._sample_combo.blockSignals(False)
         self._populate_marker_checkboxes()
         self._populate_index_columns_list()
         self._populate_keyword_selection()
