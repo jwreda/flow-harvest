@@ -9,6 +9,7 @@ evicts least-recently-used entries when memory limits are exceeded.
 from collections import OrderedDict
 from typing import Any, Optional, TypeVar, Generic
 import sys
+import threading
 import numpy as np
 
 from .logging_config import get_logger
@@ -38,6 +39,7 @@ class MemoryBoundedLRUCache(Generic[T]):
             max_bytes: Maximum memory in bytes (default 4GB)
         """
         self._cache: OrderedDict[str, T] = OrderedDict()
+        self._lock = threading.Lock()
         self._max_bytes = max_bytes
         self._current_bytes = 0
         self._eviction_count = 0
@@ -77,14 +79,16 @@ class MemoryBoundedLRUCache(Generic[T]):
         Returns:
             The cached value, or None if not found
         """
-        if key in self._cache:
-            self._cache.move_to_end(key)  # Mark as recently used
-            return self._cache[key]
-        return None
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)  # Mark as recently used
+                return self._cache[key]
+            return None
 
     def __contains__(self, key: str) -> bool:
         """Check if a key exists in the cache."""
-        return key in self._cache
+        with self._lock:
+            return key in self._cache
 
     def put(self, key: str, value: T) -> None:
         """
@@ -106,39 +110,41 @@ class MemoryBoundedLRUCache(Generic[T]):
             )
             return
 
-        # Evict oldest entries until we have space
-        while self._current_bytes + size > self._max_bytes and self._cache:
-            oldest_key, oldest_value = self._cache.popitem(last=False)
-            evicted_size = self._estimate_size(oldest_value)
-            self._current_bytes -= evicted_size
-            self._eviction_count += 1
+        with self._lock:
+            # Evict oldest entries until we have space
+            while self._current_bytes + size > self._max_bytes and self._cache:
+                oldest_key, oldest_value = self._cache.popitem(last=False)
+                evicted_size = self._estimate_size(oldest_value)
+                self._current_bytes -= evicted_size
+                self._eviction_count += 1
+                logger.debug(
+                    f"LRU evicted '{oldest_key}' ({evicted_size / 1024**2:.1f}MB), "
+                    f"freed {evicted_size / 1024**2:.1f}MB"
+                )
+
+            # If key already exists, remove its size first
+            if key in self._cache:
+                old_size = self._estimate_size(self._cache[key])
+                self._current_bytes -= old_size
+
+            # Insert new item
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            self._current_bytes += size
+
             logger.debug(
-                f"LRU evicted '{oldest_key}' ({evicted_size / 1024**2:.1f}MB), "
-                f"freed {evicted_size / 1024**2:.1f}MB"
+                f"Cached '{key}' ({size / 1024**2:.1f}MB), "
+                f"total: {self._current_bytes / 1024**2:.1f}MB / {self._max_bytes / 1024**2:.1f}MB"
             )
-
-        # If key already exists, remove its size first
-        if key in self._cache:
-            old_size = self._estimate_size(self._cache[key])
-            self._current_bytes -= old_size
-
-        # Insert new item
-        self._cache[key] = value
-        self._cache.move_to_end(key)
-        self._current_bytes += size
-
-        logger.debug(
-            f"Cached '{key}' ({size / 1024**2:.1f}MB), "
-            f"total: {self._current_bytes / 1024**2:.1f}MB / {self._max_bytes / 1024**2:.1f}MB"
-        )
 
     def clear(self) -> None:
         """Clear all items from the cache."""
-        item_count = len(self._cache)
-        self._cache.clear()
-        self._current_bytes = 0
-        if item_count > 0:
-            logger.info(f"Cleared {item_count} cached items")
+        with self._lock:
+            item_count = len(self._cache)
+            self._cache.clear()
+            self._current_bytes = 0
+            if item_count > 0:
+                logger.info(f"Cleared {item_count} cached items")
 
     @property
     def memory_usage_mb(self) -> float:

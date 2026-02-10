@@ -231,8 +231,10 @@ class WorkspaceModel:
         self._analyzed_samples_lock = threading.Lock()
         # Track samples that failed analysis (sample_id -> error message)
         self._failed_samples: Dict[str, str] = {}
+        self._failed_samples_lock = threading.Lock()
         # Track which samples have had compensation applied
         self._samples_with_compensation_applied: Set[str] = set()
+        self._compensation_lock = threading.Lock()
         # Two-phase loading state
         self._metadata_only: bool = False
         self._wsp_metadata: Optional[WSPMetadata] = None
@@ -280,8 +282,10 @@ class WorkspaceModel:
 
         self._event_cache.clear()
         self._membership_cache.clear()
-        self._analyzed_samples.clear()  # Clear analysis tracking too
-        self._failed_samples.clear()  # Clear failure tracking too
+        with self._analyzed_samples_lock:
+            self._analyzed_samples.clear()  # Clear analysis tracking too
+        with self._failed_samples_lock:
+            self._failed_samples.clear()  # Clear failure tracking too
         gc.collect()  # Force garbage collection to release memory
 
         total_items = event_count + membership_count
@@ -363,7 +367,8 @@ class WorkspaceModel:
                     # Apply compensation to the sample
                     sample = self._workspace.get_sample(sample_id)
                     sample.apply_compensation(matrix)
-                    self._samples_with_compensation_applied.add(sample_id)
+                    with self._compensation_lock:
+                        self._samples_with_compensation_applied.add(sample_id)
                     results[sample_id] = 'applied'
                     applied_count += 1
                     logger.debug(f"Applied compensation to sample {sample_id}")
@@ -391,26 +396,39 @@ class WorkspaceModel:
         FlowKit requires samples to be analyzed before gate membership
         or statistics can be computed. This method ensures analysis
         happens lazily, only when needed.
-        """
-        if sample_id in self._analyzed_samples:
-            return
 
-        if sample_id in self._failed_samples:
-            logger.debug(f"Skipping previously failed sample: {sample_id}")
+        Uses double-checked locking: quick unlocked check first (safe because
+        we only ever ADD to _analyzed_samples), then re-check under lock
+        before doing work.
+        """
+        # Fast path (unlocked) — safe because _analyzed_samples is only added to
+        if sample_id in self._analyzed_samples:
             return
 
         if not self._workspace:
             return
 
-        try:
-            logger.debug(f"On-demand analysis for sample: {sample_id}")
-            self._workspace.analyze_samples(sample_id=sample_id)
-            self._analyzed_samples.add(sample_id)
-            logger.debug(f"Successfully analyzed sample: {sample_id}")
-        except Exception as e:
-            logger.warning(f"Failed to analyze sample {sample_id}: {e}")
-            # Track as failed — do NOT mark as analyzed so statistics aren't silently zero
-            self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
+        # Acquire lock and re-check before doing work (double-checked locking)
+        with self._analyzed_samples_lock:
+            # Re-check under lock
+            if sample_id in self._analyzed_samples:
+                return
+
+            with self._failed_samples_lock:
+                if sample_id in self._failed_samples:
+                    logger.debug(f"Skipping previously failed sample: {sample_id}")
+                    return
+
+            try:
+                logger.debug(f"On-demand analysis for sample: {sample_id}")
+                self._workspace.analyze_samples(sample_id=sample_id)
+                self._analyzed_samples.add(sample_id)
+                logger.debug(f"Successfully analyzed sample: {sample_id}")
+            except Exception as e:
+                logger.warning(f"Failed to analyze sample {sample_id}: {e}")
+                # Track as failed — do NOT mark as analyzed so statistics aren't silently zero
+                with self._failed_samples_lock:
+                    self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
         """Get events from cache or load and cache them.
@@ -625,7 +643,8 @@ class WorkspaceModel:
         self.clear_cache()
         self._workspace = None
         self._metadata_only = True
-        self._samples_with_compensation_applied.clear()
+        with self._compensation_lock:
+            self._samples_with_compensation_applied.clear()
 
         logger.info(f"Phase 1: Parsing WSP metadata only: {self._wsp_path.name}")
 
@@ -1160,18 +1179,21 @@ class WorkspaceModel:
             for i, sample_id in enumerate(batch):
                 try:
                     # Skip if already analyzed (on-demand analysis may have done it)
-                    if sample_id in self._analyzed_samples:
-                        logger.debug(f"Sample {sample_id} already analyzed, skipping")
-                        continue
+                    with self._analyzed_samples_lock:
+                        if sample_id in self._analyzed_samples:
+                            logger.debug(f"Sample {sample_id} already analyzed, skipping")
+                            continue
 
                     # Skip if previously failed
-                    if sample_id in self._failed_samples:
-                        logger.debug(f"Sample {sample_id} previously failed, skipping")
-                        continue
+                    with self._failed_samples_lock:
+                        if sample_id in self._failed_samples:
+                            logger.debug(f"Sample {sample_id} previously failed, skipping")
+                            continue
 
                     logger.debug(f"Analyzing sample: {sample_id}")
                     self._workspace.analyze_samples(sample_id=sample_id)
-                    self._analyzed_samples.add(sample_id)
+                    with self._analyzed_samples_lock:
+                        self._analyzed_samples.add(sample_id)
 
                     if progress_callback:
                         progress_callback(batch_start + i + 1, total)
@@ -1180,7 +1202,8 @@ class WorkspaceModel:
                     import traceback
                     logger.debug(f"Full traceback:\n{traceback.format_exc()}")
                     # Track as failed — do NOT mark as analyzed
-                    self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
+                    with self._failed_samples_lock:
+                        self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
                     continue
 
             # Force garbage collection between batches to release memory
@@ -1226,18 +1249,21 @@ class WorkspaceModel:
             sample_ids = [s.sample_id for s in self._samples]
 
         # Filter out already-analyzed and already-failed samples
-        samples_to_analyze = [
-            sid for sid in sample_ids
-            if sid not in self._analyzed_samples and sid not in self._failed_samples
-        ]
+        with self._failed_samples_lock:
+            samples_to_analyze = [
+                sid for sid in sample_ids
+                if sid not in self._analyzed_samples and sid not in self._failed_samples
+            ]
 
         if not samples_to_analyze:
             logger.info("All samples already analyzed")
             return {sid: True for sid in sample_ids}
 
-        # Determine worker count
+        # Determine worker count — scale dynamically based on CPU and sample count
         if max_workers is None:
-            max_workers = min(4, multiprocessing.cpu_count())
+            cpu_workers = min(4, multiprocessing.cpu_count())
+            sample_workers = max(1, len(samples_to_analyze) // 3)
+            max_workers = min(cpu_workers, sample_workers)
 
         total = len(samples_to_analyze)
         completed = 0
@@ -1279,7 +1305,8 @@ class WorkspaceModel:
                         logger.debug(f"Parallel analysis completed: {sample_id}")
                     else:
                         # Track as failed — do NOT mark as analyzed
-                        self._failed_samples[sample_id] = error or "Unknown error"
+                        with self._failed_samples_lock:
+                            self._failed_samples[sample_id] = error or "Unknown error"
                         logger.warning(f"Parallel analysis failed for {sample_id}: {error}")
 
                     completed += 1
@@ -1425,7 +1452,9 @@ class WorkspaceModel:
                 source = 'raw' if data_source == DataSource.RAW else 'comp'
 
                 # For COMP mode with selective loading, verify compensation was applied
-                if data_source == DataSource.COMP and sample_id not in self._samples_with_compensation_applied:
+                with self._compensation_lock:
+                    comp_not_applied = data_source == DataSource.COMP and sample_id not in self._samples_with_compensation_applied
+                if comp_not_applied:
                     comp_status = self._compensation_status.get(sample_id) if hasattr(self, '_compensation_status') else None
                     if comp_status == 'none':
                         raise CompensationError(
@@ -1467,7 +1496,9 @@ class WorkspaceModel:
 
             elif data_source == DataSource.COMP:
                 # Force compensated data - fail if compensation wasn't applied
-                if sample_id not in self._samples_with_compensation_applied:
+                with self._compensation_lock:
+                    comp_not_applied = sample_id not in self._samples_with_compensation_applied
+                if comp_not_applied:
                     # Check if sample has compensation status from WSP
                     comp_status = self._compensation_status.get(sample_id) if hasattr(self, '_compensation_status') else None
                     if comp_status == 'none':
@@ -1580,13 +1611,15 @@ class WorkspaceModel:
 
     def get_analysis_failures(self) -> Dict[str, str]:
         """Get samples that failed analysis with error messages."""
-        return self._failed_samples.copy()
+        with self._failed_samples_lock:
+            return self._failed_samples.copy()
 
     def get_analysis_summary(self) -> Dict[str, int]:
         """Get summary of analysis status across all samples."""
         total = len(self._samples) if self._samples else 0
         analyzed = len(self._analyzed_samples)
-        failed = len(self._failed_samples)
+        with self._failed_samples_lock:
+            failed = len(self._failed_samples)
         pending = total - analyzed - failed
         return {
             'total': total,

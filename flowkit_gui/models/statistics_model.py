@@ -10,6 +10,9 @@ This module provides:
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
+import threading
 import gc
 import pandas as pd
 import numpy as np
@@ -80,6 +83,7 @@ class StatisticsModel:
         self._statistics: Dict[str, Dict[str, GateStatistics]] = {}
         # Structure: {sample_id: {gate_id: GateStatistics}}
         self._warnings: List[str] = []  # Collect warnings during calculation
+        self._warnings_lock = threading.Lock()  # Protects _warnings in parallel mode
         self._normalized_counts_df: Optional[pd.DataFrame] = None  # Volume-normalized counts
         self._bead_normalized_df: Optional[pd.DataFrame] = None  # Bead-normalized counts
 
@@ -172,6 +176,164 @@ class StatisticsModel:
 
         logger.info(f"Statistics calculation complete: {successful_calcs} successful, {samples_with_errors} with errors")
 
+    def calculate_statistics_parallel(
+        self,
+        gate_ids: List[str],
+        channels: List[str],
+        metrics: List[MFIMetric],
+        max_workers: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        sample_ids: Optional[List[str]] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
+        cancellation_token: Optional[CancellationToken] = None,
+        gc_interval: int = 10
+    ) -> None:
+        """
+        Calculate statistics for specified gates and channels using parallel workers.
+
+        This is the parallel equivalent of calculate_statistics(). Each sample is
+        processed by a separate worker thread. NumPy releases the GIL during MFI
+        calculations (mean, median, gmean), enabling true parallelism across cores.
+
+        Args:
+            gate_ids: List of gate IDs to calculate stats for
+            channels: List of channel names for MFI calculation
+            metrics: List of MFI metrics to calculate
+            max_workers: Number of worker threads (None = min(4, cpu_count))
+            progress_callback: Optional callback(current, total) for progress
+            sample_ids: Optional list of sample IDs to include (None = all samples)
+            status_callback: Optional callback(message) for status updates
+            cancellation_token: Optional token to support cancellation
+            gc_interval: Run gc.collect() every N completed samples (default 10)
+
+        Raises:
+            CancellationError: If cancellation_token is cancelled
+        """
+        # --- Same setup as sequential method ---
+        self._statistics.clear()
+        self._warnings.clear()
+
+        # Filter samples if sample_ids provided
+        if sample_ids is not None:
+            sample_id_set = set(sample_ids)
+            samples = [s for s in self._workspace.samples if s.sample_id in sample_id_set]
+        else:
+            samples = self._workspace.samples
+
+        # Store which samples we're processing for later use
+        self._included_samples = samples
+        total_work = len(samples) * len(gate_ids)
+
+        # Determine worker count
+        if max_workers is None:
+            max_workers = min(4, multiprocessing.cpu_count())
+
+        logger.info(
+            f"Calculating statistics (parallel, {max_workers} workers) for "
+            f"{len(samples)} samples, {len(gate_ids)} gates, {len(channels)} channels"
+        )
+        logger.debug(f"Data source: {self._data_source.value}")
+
+        # Lock for defensive safety when merging results into shared state
+        results_lock = threading.Lock()
+
+        # --- Worker function ---
+        def process_sample(sample):
+            """Process all gates for a single sample. Returns collected results."""
+            sample_id = sample.sample_id
+            sample_stats = {}
+            sample_warnings = []
+            successful_count = 0
+            error_count = 0
+
+            # Check if sample has FCS data
+            if not self._workspace.has_fcs_data(sample_id):
+                logger.warning(f"Sample '{sample_id}' has no FCS data - skipping MFI calculations")
+                sample_warnings.append(f"Sample '{sample.name}': No FCS data available")
+
+            for gate_id in gate_ids:
+                # Reuse the existing per-gate calculation method
+                stats = self._calculate_gate_stats(sample_id, gate_id, channels, metrics)
+                sample_stats[gate_id] = stats
+
+                if stats.error_message:
+                    error_count += 1
+                elif stats.mfi_values:
+                    successful_count += 1
+
+            return (sample_id, sample_stats, sample_warnings, successful_count, error_count)
+
+        # --- Tracking variables ---
+        samples_with_errors = 0
+        successful_calcs = 0
+        completed_count = 0
+
+        context = f"{len(samples)} samples, {len(gate_ids)} gates, {len(channels)} channels, {max_workers} workers"
+
+        with timed_operation("Statistics calculation (parallel)", context):
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit one future per sample
+                future_to_sample = {
+                    executor.submit(process_sample, sample): sample
+                    for sample in samples
+                }
+
+                # Process results as they complete
+                for future in as_completed(future_to_sample):
+                    # Check for cancellation at each sample completion
+                    if cancellation_token:
+                        if cancellation_token.is_cancelled:
+                            # Cancel remaining futures
+                            for pending_future in future_to_sample:
+                                pending_future.cancel()
+                            cancellation_token.check_cancelled()  # Raises CancellationError
+
+                    sample = future_to_sample[future]
+
+                    try:
+                        sample_id, sample_stats, sample_warnings, s_success, s_errors = future.result()
+                    except CancellationError:
+                        raise  # Re-raise cancellation
+                    except Exception as e:
+                        # Worker raised an unexpected exception
+                        sample_id = sample.sample_id
+                        logger.error(f"Worker failed for sample '{sample_id}': {type(e).__name__}: {e}")
+                        samples_with_errors += 1
+                        completed_count += 1
+                        # Still update progress
+                        if progress_callback:
+                            progress_callback(completed_count * len(gate_ids), total_work)
+                        continue
+
+                    # Merge results under lock for defensive safety
+                    with results_lock:
+                        self._statistics[sample_id] = sample_stats
+                        self._warnings.extend(sample_warnings)
+
+                    successful_calcs += s_success
+                    samples_with_errors += s_errors
+                    completed_count += 1
+
+                    # Progress callback — increment by number of gates per sample
+                    if progress_callback:
+                        progress_callback(completed_count * len(gate_ids), total_work)
+
+                    # Status callback with sample progress
+                    if status_callback:
+                        status_callback(
+                            f"Processed sample {completed_count}/{len(samples)}: {sample.name}"
+                        )
+
+                    # Periodic garbage collection
+                    if completed_count % gc_interval == 0:
+                        gc.collect()
+                        logger.info(f"  Processed {completed_count}/{len(samples)} samples")
+
+        logger.info(
+            f"Statistics calculation (parallel) complete: "
+            f"{successful_calcs} successful, {samples_with_errors} with errors"
+        )
+
     def _calculate_gate_stats(
         self,
         sample_id: str,
@@ -199,7 +361,8 @@ class StatisticsModel:
             if stats.event_count > 0 and stats.event_count < LOW_EVENT_WARNING_THRESHOLD:
                 warning_msg = f"Gate '{gate_id}' has only {stats.event_count} events - statistics are unreliable"
                 logger.warning(warning_msg)
-                self._warnings.append(f"Sample '{sample_id}', {warning_msg}")
+                with self._warnings_lock:
+                    self._warnings.append(f"Sample '{sample_id}', {warning_msg}")
             elif stats.event_count > 0 and stats.event_count < MODERATE_EVENT_WARNING_THRESHOLD:
                 logger.info(f"Gate '{gate_id}' has {stats.event_count} events - interpret statistics with caution")
 
@@ -255,7 +418,8 @@ class StatisticsModel:
             error_msg = f"{type(e).__name__}: {e}"
             logger.error(f"_calculate_gate_stats FAILED for {sample_id}/{gate_id}: {error_msg}")
             stats.error_message = error_msg
-            self._warnings.append(f"Sample '{sample_id}', Gate '{gate_id}': {error_msg}")
+            with self._warnings_lock:
+                self._warnings.append(f"Sample '{sample_id}', Gate '{gate_id}': {error_msg}")
 
         return stats
 

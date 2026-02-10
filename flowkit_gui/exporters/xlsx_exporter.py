@@ -21,6 +21,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from ..models.workspace_model import WorkspaceModel, DataSource
 from ..models.keywords_model import KeywordsModel
 from ..models.statistics_model import StatisticsModel, MFIMetric, FrequencyDataType
+from ..config import defaults as config_defaults
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
 from ..utils.timing import PipelineTimer
@@ -343,15 +344,29 @@ class XLSXExporter:
             status_callback("Calculating statistics...")
         stats_model = StatisticsModel(self._workspace, data_source=self._data_source)
         if all_markers_combined:
+            # Use parallel statistics when multiple workers configured
+            max_workers = config_defaults.MAX_PARALLEL_WORKERS
             with timer.step("Calculate statistics"):
-                stats_model.calculate_statistics(
-                    self._gate_ids,
-                    all_markers_combined,
-                    self._mfi_metrics,
-                    sample_ids=self._selected_sample_ids,  # Filter by selected samples
-                    status_callback=status_callback,
-                    cancellation_token=cancellation_token
-                )
+                if max_workers is None or max_workers > 1:
+                    stats_model.calculate_statistics_parallel(
+                        self._gate_ids,
+                        all_markers_combined,
+                        self._mfi_metrics,
+                        max_workers=max_workers,
+                        sample_ids=self._selected_sample_ids,
+                        status_callback=status_callback,
+                        cancellation_token=cancellation_token,
+                        gc_interval=config_defaults.GC_COLLECT_INTERVAL
+                    )
+                else:
+                    stats_model.calculate_statistics(
+                        self._gate_ids,
+                        all_markers_combined,
+                        self._mfi_metrics,
+                        sample_ids=self._selected_sample_ids,
+                        status_callback=status_callback,
+                        cancellation_token=cancellation_token
+                    )
             calc_warnings = stats_model.get_warnings()
             if calc_warnings:
                 self._warnings.extend(calc_warnings)

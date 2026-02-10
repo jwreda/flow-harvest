@@ -2611,7 +2611,15 @@ class MainWindow(QMainWindow):
             )
 
             # Pre-analyze samples to detect failures before export
-            self._workspace_model.analyze_samples(sample_ids=selected_sample_ids)
+            workers_val = self._max_workers_spin.value()
+            effective_workers = None if workers_val == 0 else workers_val
+            if effective_workers is None or effective_workers > 1:
+                self._workspace_model.analyze_samples_parallel(
+                    sample_ids=selected_sample_ids,
+                    max_workers=effective_workers
+                )
+            else:
+                self._workspace_model.analyze_samples(sample_ids=selected_sample_ids)
 
             # Check for analysis failures
             failures = self._workspace_model.get_analysis_failures()
