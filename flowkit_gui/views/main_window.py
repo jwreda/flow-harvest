@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QApplication, QSpinBox, QLineEdit
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor, QPixmap, QPainter, QBrush
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QKeySequence, QColor, QPixmap, QPainter, QBrush, QFont, QFontMetrics
 
 from ..models.workspace_model import WorkspaceModel, DataSource, CompensationMatrixInfo, CompensationError, Sample, SampleCompensationAssignment
 from ..models.gate_tree_model import GateTreeModel, Gate
@@ -1498,6 +1498,11 @@ class MainWindow(QMainWindow):
         # Update sample selection with actual event counts
         self._update_sample_selection_with_fcs_data()
 
+        # Grey out samples without FCS data — use actual FCS files on disk as source of truth
+        fcs_on_disk = {Path(f).name for f in self._pending_fcs_files} if hasattr(self, '_pending_fcs_files') and self._pending_fcs_files else set()
+        loaded_ids = {s.sample_id for s in self._workspace_model.samples if s.sample_id in fcs_on_disk}
+        self._sample_selection_model.mark_unloaded_samples(loaded_ids)
+
         # Update compensation status display with full data from loaded samples
         comp_assignments = self._workspace_model.compensation_assignments
         if comp_assignments:
@@ -1775,28 +1780,36 @@ class MainWindow(QMainWindow):
             self._bead_gate_combo.setItemData(idx, gate_info.full_path_string, Qt.ToolTipRole)
 
     def _create_depth_dot_icon(self, depth: int) -> QIcon:
-        """Create a QIcon with colored depth dots for combo box items."""
+        """Create a QIcon showing gate depth as a colored number for combo box items."""
         if depth <= 0:
             return QIcon()
 
-        DOT_SIZE = 8
-        DOT_SPACING = 2
+        FONT_SIZE = 11
         PADDING = 2
 
-        width = depth * (DOT_SIZE + DOT_SPACING) - DOT_SPACING + PADDING * 2
-        height = DOT_SIZE + PADDING * 2
+        # Use the deepest level's color
+        color = QColor(DEPTH_COLORS[(depth - 1) % len(DEPTH_COLORS)])
+
+        # Measure text width
+        font = QFont()
+        font.setPointSize(FONT_SIZE)
+        font.setBold(True)
+        fm = QFontMetrics(font)
+        text = str(depth)
+        text_width = fm.horizontalAdvance(text)
+        text_height = fm.height()
+
+        width = text_width + PADDING * 2
+        height = text_height + PADDING * 2
 
         pixmap = QPixmap(width, height)
         pixmap.fill(Qt.transparent)
 
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        for i in range(depth):
-            color_idx = i % len(DEPTH_COLORS)
-            painter.setBrush(QBrush(QColor(DEPTH_COLORS[color_idx])))
-            painter.setPen(Qt.NoPen)
-            x = PADDING + i * (DOT_SIZE + DOT_SPACING)
-            painter.drawEllipse(x, PADDING, DOT_SIZE, DOT_SIZE)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setFont(font)
+        painter.setPen(color)
+        painter.drawText(PADDING, PADDING + fm.ascent(), text)
         painter.end()
 
         return QIcon(pixmap)
@@ -2408,8 +2421,9 @@ class MainWindow(QMainWindow):
         available_keywords = self._keywords_model.get_available_keywords()
         for keyword in sorted(available_keywords):
             item = QListWidgetItem(keyword)
-            item.setSelected(True)  # Select all by default
             self._keyword_selection_list.addItem(item)
+        # Select all AFTER adding — setSelected() before addItem() has no effect in Qt
+        self._keyword_selection_list.selectAll()
 
     def _on_select_all_export_keywords(self):
         """Select all keywords for export."""
@@ -2633,6 +2647,8 @@ class MainWindow(QMainWindow):
                 scale_factors = self._sample_selection_model.get_scale_factors()
                 if scale_factors:
                     logger.info(f"Scale factors enabled for {len(scale_factors)} samples")
+                else:
+                    scale_factors = None  # Normalize empty dict to None
 
             config = ExportConfig(
                 gate_ids=gate_ids,
@@ -2667,13 +2683,23 @@ class MainWindow(QMainWindow):
             # Pre-analyze samples to detect failures before export
             workers_val = self._max_workers_spin.value()
             effective_workers = None if workers_val == 0 else workers_val
+
+            # Pre-analyze with UI feedback
+            def analysis_progress(completed, total):
+                self.statusBar().showMessage(f"Analyzing samples ({completed}/{total})...")
+                QApplication.processEvents()
+
             if effective_workers is None or effective_workers > 1:
                 self._workspace_model.analyze_samples_parallel(
                     sample_ids=selected_sample_ids,
-                    max_workers=effective_workers
+                    max_workers=effective_workers,
+                    progress_callback=analysis_progress
                 )
             else:
-                self._workspace_model.analyze_samples(sample_ids=selected_sample_ids)
+                # Sequential analysis — still provide feedback
+                for i, sid in enumerate(selected_sample_ids):
+                    self._workspace_model.analyze_samples(sample_ids=[sid])
+                    analysis_progress(i + 1, len(selected_sample_ids))
 
             # Check for analysis failures
             failures = self._workspace_model.get_analysis_failures()
@@ -2682,6 +2708,8 @@ class MainWindow(QMainWindow):
                 if len(failures) > 10:
                     failure_list += f"\n  ... and {len(failures) - 10} more"
 
+                # Re-enable before showing dialog to avoid focus issues
+                self.setEnabled(True)
                 response = QMessageBox.warning(
                     self,
                     "Analysis Failures Detected",
@@ -2693,6 +2721,7 @@ class MainWindow(QMainWindow):
                 )
                 if response == QMessageBox.No:
                     return
+                self.setEnabled(False)  # Re-disable before continuing with export
 
             # Show progress dialog with detailed status
             progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
@@ -2757,6 +2786,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:
             logger.error(f"Export failed: {type(e).__name__}: {e}")
+            self.setEnabled(True)  # Re-enable before dialog to avoid focus issues
             QMessageBox.critical(
                 self,
                 "Export Error",
@@ -2766,8 +2796,8 @@ class MainWindow(QMainWindow):
             # Re-enable UI after export completes
             self.setEnabled(True)
             # Clear caches after export to free memory for large datasets
-            self._workspace_model.clear_cache()
-            logger.info("Cleared caches after export")
+            self._workspace_model.clear_data_cache()
+            logger.info("Cleared data caches after export (analysis state preserved)")
 
     def _show_settings_dialog(self):
         """Show the settings dialog for system keywords configuration."""

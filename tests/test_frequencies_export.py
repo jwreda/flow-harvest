@@ -680,8 +680,8 @@ class TestFrequencyEdgeCases:
         wb = load_workbook(filepath)
         # _All sheets should exist when include_all_sheets=True
         assert "Frequencies_All" in wb.sheetnames
-        # _Selected sheets should NOT exist (no markers selected)
-        assert "Frequencies_Selected" not in wb.sheetnames
+        # Frequencies_Selected should ALSO exist (count/freq are gate-level, always written)
+        assert "Frequencies_Selected" in wb.sheetnames
 
 
 class TestFrequencySheetOrder:

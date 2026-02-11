@@ -558,6 +558,32 @@ class SampleSelectionModel(QStandardItemModel):
             return 1.0
         return self._scale_factors.get(sample_id, 1.0)
 
+    def mark_unloaded_samples(self, loaded_sample_ids: Set[str]) -> None:
+        """Grey out samples that don't have FCS data loaded.
+
+        Iterates all tracked sample items. For samples whose IDs are NOT in
+        loaded_sample_ids, sets the foreground to grey, adds a tooltip, and
+        updates the events column to show "No FCS".
+
+        Args:
+            loaded_sample_ids: Set of sample IDs that have FCS data available
+        """
+        grey = QBrush(QColor("#888888"))
+        for sample_id, items in self._sample_items.items():
+            if sample_id in loaded_sample_ids:
+                continue
+            for item in items:
+                item.setForeground(grey)
+                item.setToolTip("FCS file not found")
+                # Update events column to show "No FCS"
+                parent = item.parent()
+                if parent:
+                    row = item.row()
+                    events_item = parent.child(row, self.COLUMN_EVENTS)
+                    if events_item:
+                        events_item.setText("No FCS")
+                        events_item.setForeground(grey)
+
     def get_selection_summary(self) -> Dict[str, int]:
         """Get summary of selection state."""
         selected = sum(1 for v in self._selection_state.values() if v)

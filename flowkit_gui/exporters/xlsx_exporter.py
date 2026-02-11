@@ -15,6 +15,7 @@ from typing import List, Optional, Callable, Dict, Any
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -217,6 +218,20 @@ class XLSXExporter:
         """
         self._warnings.clear()
         wb = Workbook()
+        try:
+            return self._export_workbook(wb, filepath, progress_callback, status_callback, cancellation_token)
+        finally:
+            wb.close()
+
+    def _export_workbook(
+        self,
+        wb: Workbook,
+        filepath: str,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
+        cancellation_token: Optional[CancellationToken] = None
+    ) -> ExportSummary:
+        """Internal export implementation that writes to the given workbook."""
 
         # Initialize pipeline timer for performance monitoring
         timer = PipelineTimer("Excel Export")
@@ -270,14 +285,27 @@ class XLSXExporter:
         # Calculate total steps for progress
         # Base: Gating_Strategy, Keywords = 2
         # _All sheets (optional): Counts_All, Frequencies_All, MFI_All, Concatenated_All = 4
-        # _Selected sheets (only if markers selected): Counts_Selected, Frequencies_Selected, MFI_Selected, Concatenated_Selected = 4
-        # Optional: Keywords_Wide (+1), Tidy _All (+2), Tidy _Selected (+2 if markers selected)
+        # Count/Freq sheets always written; MFI/Concatenated only if markers selected
+        # Optional: Keywords_Wide (+1), Tidy _All (+2), Tidy count/freq (+2), Tidy MFI if markers
         all_sheet_count = 4 if self._include_all_sheets else 0
-        selected_sheet_count = 4 if has_selected_markers else 0
+        # Counts_Selected + Frequencies_Selected always; MFI + Concatenated only if markers
+        selected_sheet_count = 2 + (2 if has_selected_markers else 0)
         tidy_all_count = 2 if self._include_tidy_frequencies and self._include_all_sheets else 0
-        tidy_selected_count = 2 if self._include_tidy_frequencies and has_selected_markers else 0
+        # Tidy count/freq always when tidy enabled; no tidy MFI sheets exist
+        tidy_selected_count = 2 if self._include_tidy_frequencies else 0
         # +1 for Compensation sheet
         total_steps = 3 + all_sheet_count + selected_sheet_count + (1 if self._include_wide_keywords else 0) + tidy_all_count + tidy_selected_count
+
+        # Add volume normalization sheets
+        if self._volume_normalize:
+            total_steps += 1  # Selected volume-normalized sheet
+            if self._include_all_sheets:
+                total_steps += 1  # All volume-normalized sheet
+
+        # Add bead normalization sheet
+        if self._bead_normalize and self._bead_gate_id:
+            total_steps += 1
+
         current_step = 0
 
         # Sheet 1: Gating Strategy
@@ -432,24 +460,23 @@ class XLSXExporter:
             if progress_callback:
                 progress_callback(current_step, total_steps)
 
-        # Sheet: Counts_Selected (only if markers are selected)
-        if has_selected_markers:
-            if status_callback:
-                status_callback("Writing Counts_Selected sheet...")
-            ws_counts_selected = wb.create_sheet("Counts_Selected")
-            self._write_frequencies_wide_sheet(
-                ws_counts_selected, stats_model, self._gate_ids, "Selected Gates Counts",
-                data_type=FrequencyDataType.COUNTS
-            )
-            sheets_created.append("Counts_Selected")
-            current_step += 1
-            if progress_callback:
-                progress_callback(current_step, total_steps)
+        # Sheet: Counts_Selected (always written — counts are gate-level, not marker-dependent)
+        if status_callback:
+            status_callback("Writing Counts_Selected sheet...")
+        ws_counts_selected = wb.create_sheet("Counts_Selected")
+        self._write_frequencies_wide_sheet(
+            ws_counts_selected, stats_model, self._gate_ids, "Selected Gates Counts",
+            data_type=FrequencyDataType.COUNTS
+        )
+        sheets_created.append("Counts_Selected")
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step, total_steps)
 
         # Sheet: Volume-normalized counts (if enabled)
         if self._volume_normalize and normalized_counts_df is not None:
+            sheet_name = self._get_volume_sheet_name(include_all=False)
             if status_callback:
-                sheet_name = self._get_volume_sheet_name(include_all=False)
                 status_callback(f"Writing {sheet_name} sheet...")
             ws_vol_norm = wb.create_sheet(sheet_name)
             self._write_normalized_counts_sheet(ws_vol_norm, normalized_counts_df, sheet_name)
@@ -498,19 +525,18 @@ class XLSXExporter:
             if progress_callback:
                 progress_callback(current_step, total_steps)
 
-        # Sheet: Frequencies_Selected (only if markers are selected)
-        if has_selected_markers:
-            if status_callback:
-                status_callback("Writing Frequencies_Selected sheet...")
-            ws_freq_selected = wb.create_sheet("Frequencies_Selected")
-            self._write_frequencies_wide_sheet(
-                ws_freq_selected, stats_model, self._gate_ids, "Selected Gates Frequencies",
-                data_type=FrequencyDataType.PERCENT
-            )
-            sheets_created.append("Frequencies_Selected")
-            current_step += 1
-            if progress_callback:
-                progress_callback(current_step, total_steps)
+        # Sheet: Frequencies_Selected (always written — frequencies are gate-level, not marker-dependent)
+        if status_callback:
+            status_callback("Writing Frequencies_Selected sheet...")
+        ws_freq_selected = wb.create_sheet("Frequencies_Selected")
+        self._write_frequencies_wide_sheet(
+            ws_freq_selected, stats_model, self._gate_ids, "Selected Gates Frequencies",
+            data_type=FrequencyDataType.PERCENT
+        )
+        sheets_created.append("Frequencies_Selected")
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step, total_steps)
 
         # Optional: Tidy format sheets (counts and frequencies separate)
         if self._include_tidy_frequencies:
@@ -528,19 +554,18 @@ class XLSXExporter:
                 if progress_callback:
                     progress_callback(current_step, total_steps)
 
-            # Counts_Selected_Tidy (only if markers are selected)
-            if has_selected_markers:
-                if status_callback:
-                    status_callback("Writing Counts_Selected_Tidy sheet...")
-                ws_counts_selected_tidy = wb.create_sheet("Counts_Selected_Tidy")
-                self._write_frequencies_tidy_sheet(
-                    ws_counts_selected_tidy, stats_model, self._gate_ids, "Selected Gates Counts Tidy",
-                    data_type=FrequencyDataType.COUNTS
-                )
-                sheets_created.append("Counts_Selected_Tidy")
-                current_step += 1
-                if progress_callback:
-                    progress_callback(current_step, total_steps)
+            # Counts_Selected_Tidy (always written — counts are gate-level, not marker-dependent)
+            if status_callback:
+                status_callback("Writing Counts_Selected_Tidy sheet...")
+            ws_counts_selected_tidy = wb.create_sheet("Counts_Selected_Tidy")
+            self._write_frequencies_tidy_sheet(
+                ws_counts_selected_tidy, stats_model, self._gate_ids, "Selected Gates Counts Tidy",
+                data_type=FrequencyDataType.COUNTS
+            )
+            sheets_created.append("Counts_Selected_Tidy")
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
             # Frequencies_All_Tidy (only if include_all_sheets is enabled)
             if self._include_all_sheets:
@@ -556,19 +581,18 @@ class XLSXExporter:
                 if progress_callback:
                     progress_callback(current_step, total_steps)
 
-            # Frequencies_Selected_Tidy (only if markers are selected)
-            if has_selected_markers:
-                if status_callback:
-                    status_callback("Writing Frequencies_Selected_Tidy sheet...")
-                ws_freq_selected_tidy = wb.create_sheet("Frequencies_Selected_Tidy")
-                self._write_frequencies_tidy_sheet(
-                    ws_freq_selected_tidy, stats_model, self._gate_ids, "Selected Gates Frequencies Tidy",
-                    data_type=FrequencyDataType.PERCENT
-                )
-                sheets_created.append("Frequencies_Selected_Tidy")
-                current_step += 1
-                if progress_callback:
-                    progress_callback(current_step, total_steps)
+            # Frequencies_Selected_Tidy (always written — frequencies are gate-level, not marker-dependent)
+            if status_callback:
+                status_callback("Writing Frequencies_Selected_Tidy sheet...")
+            ws_freq_selected_tidy = wb.create_sheet("Frequencies_Selected_Tidy")
+            self._write_frequencies_tidy_sheet(
+                ws_freq_selected_tidy, stats_model, self._gate_ids, "Selected Gates Frequencies Tidy",
+                data_type=FrequencyDataType.PERCENT
+            )
+            sheets_created.append("Frequencies_Selected_Tidy")
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
 
         # Sheet: MFI_Selected - Pure MFI only (no gate stats)
         if has_selected_markers:
@@ -915,7 +939,7 @@ class XLSXExporter:
         freeze_col = 'F'  # Default
         for i, col in enumerate(df.columns):
             if '_count' in col or '_Mean_' in col or '_Median_' in col:
-                freeze_col = chr(ord('A') + i)
+                freeze_col = get_column_letter(i + 1)
                 break
 
         ws.freeze_panes = f"{freeze_col}2"
@@ -985,7 +1009,7 @@ class XLSXExporter:
         freeze_col = 'F'  # Default
         for i, col in enumerate(df.columns):
             if '_count' in col or '_Mean_' in col or '_Median_' in col:
-                freeze_col = chr(ord('A') + i)
+                freeze_col = get_column_letter(i + 1)
                 break
 
         ws.freeze_panes = f"{freeze_col}2"
@@ -1032,7 +1056,7 @@ class XLSXExporter:
         freeze_col = 'D'  # Default: after sample_id, sample_name, and some keywords
         for i, col in enumerate(df.columns):
             if '_count' in col or '_%parent' in col:
-                freeze_col = chr(ord('A') + i)
+                freeze_col = get_column_letter(i + 1)
                 break
 
         ws.freeze_panes = f"{freeze_col}2"
@@ -1235,7 +1259,7 @@ class XLSXExporter:
         freeze_col = 'D'  # Default: after sample_id, sample_name, and some keywords
         for i, col in enumerate(df.columns):
             if '_%of_' in col:
-                freeze_col = chr(ord('A') + min(i, 25))  # Cap at 'Z'
+                freeze_col = get_column_letter(i + 1)
                 break
 
         ws.freeze_panes = f"{freeze_col}2"

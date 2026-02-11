@@ -485,9 +485,11 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have: Gating_Strategy, Keywords, Compensation, Counts_All, Frequencies_All, MFI_All, Concatenated_All
-        # (no _Selected sheets when selected_markers is empty)
-        assert len(wb.sheetnames) == 7
+        # Should have: Gating_Strategy, Keywords, Compensation,
+        # Counts_All, Frequencies_All, MFI_All, Concatenated_All,
+        # Counts_Selected, Frequencies_Selected (count/freq always written)
+        # (no MFI_Selected or Concatenated_Selected when selected_markers is empty)
+        assert len(wb.sheetnames) == 9
 
     def test_sheet_count_with_wide(self, tmp_path):
         """Test correct number of sheets with Keywords_Wide and include_all_sheets."""
@@ -517,9 +519,11 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # Should have: Gating_Strategy, Keywords, Keywords_Wide, Compensation, Counts_All, Frequencies_All, MFI_All, Concatenated_All
-        # (no _Selected sheets when selected_markers is empty)
-        assert len(wb.sheetnames) == 8
+        # Should have: Gating_Strategy, Keywords, Keywords_Wide, Compensation,
+        # Counts_All, Frequencies_All, MFI_All, Concatenated_All,
+        # Counts_Selected, Frequencies_Selected (count/freq always written)
+        # (no MFI_Selected or Concatenated_Selected when selected_markers is empty)
+        assert len(wb.sheetnames) == 10
 
     def test_selected_sheets_included_when_markers_selected(self, tmp_path):
         """Test _Selected sheets ARE included when markers are selected."""
@@ -563,7 +567,7 @@ class TestXLSXExporterSheetCount:
         assert len(wb.sheetnames) == 11
 
     def test_selected_sheets_excluded_when_no_markers(self, tmp_path):
-        """Test _Selected sheets are NOT included when no markers are selected."""
+        """Test MFI/Concatenated _Selected sheets are excluded when no markers, but count/freq always present."""
         from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
         workspace = MockWorkspaceModel()
@@ -592,17 +596,18 @@ class TestXLSXExporterSheetCount:
         exporter.export(str(filepath))
 
         wb = load_workbook(filepath)
-        # _Selected sheets should NOT exist
+        # MFI/Concatenated _Selected sheets should NOT exist (need markers)
         assert "MFI_Selected" not in wb.sheetnames
         assert "Concatenated_Selected" not in wb.sheetnames
-        assert "Counts_Selected" not in wb.sheetnames
-        assert "Frequencies_Selected" not in wb.sheetnames
-        # Only _All sheets should exist (when include_all_sheets=True) + Compensation
+        # Count/Frequency _Selected sheets SHOULD exist (gate-level, no markers needed)
+        assert "Counts_Selected" in wb.sheetnames
+        assert "Frequencies_Selected" in wb.sheetnames
+        # _All sheets should exist (when include_all_sheets=True) + Compensation
         assert "MFI_All" in wb.sheetnames
         assert "Concatenated_All" in wb.sheetnames
         assert "Counts_All" in wb.sheetnames
         assert "Frequencies_All" in wb.sheetnames
-        assert len(wb.sheetnames) == 7
+        assert len(wb.sheetnames) == 9
 
 
 class TestXLSXExporterSummary:

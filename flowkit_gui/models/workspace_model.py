@@ -21,6 +21,7 @@ import re
 import threading
 from lxml import etree
 import flowkit as fk
+from flowkit import Matrix as FKMatrix
 import pandas as pd
 import numpy as np
 from natsort import natsorted, ns
@@ -232,6 +233,10 @@ class WorkspaceModel:
         # Track samples that failed analysis (sample_id -> error message)
         self._failed_samples: Dict[str, str] = {}
         self._failed_samples_lock = threading.Lock()
+        # Lock to serialize compensation retry (mutates shared gating_strategy)
+        self._comp_retry_lock = threading.Lock()
+        # Lock to serialize FlowKit workspace.analyze_samples() calls (not thread-safe)
+        self._workspace_analysis_lock = threading.Lock()
         # Track which samples have had compensation applied
         self._samples_with_compensation_applied: Set[str] = set()
         self._compensation_lock = threading.Lock()
@@ -273,8 +278,8 @@ class WorkspaceModel:
         """Returns the path to the loaded WSP file."""
         return self._wsp_path
 
-    def clear_cache(self) -> None:
-        """Clear all cached event and membership data to free memory."""
+    def clear_data_cache(self) -> None:
+        """Clear cached event and membership data to free memory, preserving analysis state."""
         event_count = len(self._event_cache)
         membership_count = len(self._membership_cache)
         event_evictions = self._event_cache.eviction_count
@@ -282,10 +287,6 @@ class WorkspaceModel:
 
         self._event_cache.clear()
         self._membership_cache.clear()
-        with self._analyzed_samples_lock:
-            self._analyzed_samples.clear()  # Clear analysis tracking too
-        with self._failed_samples_lock:
-            self._failed_samples.clear()  # Clear failure tracking too
         gc.collect()  # Force garbage collection to release memory
 
         total_items = event_count + membership_count
@@ -295,6 +296,15 @@ class WorkspaceModel:
                 f"(events={event_count}, membership={membership_count}, "
                 f"prior evictions: events={event_evictions}, membership={membership_evictions})"
             )
+
+    def clear_cache(self) -> None:
+        """Clear all cached data AND analysis tracking (full reset)."""
+        self.clear_data_cache()
+        with self._analyzed_samples_lock:
+            self._analyzed_samples.clear()
+        with self._failed_samples_lock:
+            self._failed_samples.clear()
+        logger.info("Full cache clear: analysis and failure tracking also reset")
 
     def get_cache_stats(self) -> Dict[str, float]:
         """
@@ -439,40 +449,69 @@ class WorkspaceModel:
                     self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
 
     def _retry_analysis_without_comp(self, sample_id: str) -> bool:
-        """Retry sample analysis after stripping incompatible compensation.
+        """Retry sample analysis by replacing compensation with identity matrices.
 
         FlowKit embeds compensation transforms in each sample's gating strategy.
         When the comp matrix detectors don't match the sample channels, analysis
-        fails. This method strips the comp matrices and retries, giving gate
-        counts based on raw (uncompensated) data.
+        fails. This method replaces each comp matrix with an identity matrix
+        whose detectors match the sample's actual fluorochrome channels. This
+        preserves the comp_matrices keys so gate dimension references still
+        resolve, but applies no actual compensation (identity @ events = events).
+
+        For unmixed/spectral data, this is scientifically correct since spectral
+        unmixing has already been applied upstream.
 
         Returns True if retry succeeded, False otherwise.
         """
-        try:
-            sample_data = self._workspace._sample_data_lut.get(sample_id)
-            if not sample_data:
-                return False
-
-            gating_strategy = sample_data.get('gating_strategy')
-            if not gating_strategy:
-                return False
-
-            # Clear all comp matrices from gating strategy
-            original_comps = dict(gating_strategy.comp_matrices)
-            gating_strategy.comp_matrices.clear()
-
+        with self._comp_retry_lock:
             try:
-                self._workspace.analyze_samples(sample_id=sample_id)
-                logger.info(f"Successfully analyzed {sample_id} without compensation")
-                return True
-            except Exception as retry_e:
-                logger.warning(f"Retry without comp also failed for {sample_id}: {retry_e}")
-                # Restore original comp matrices
-                gating_strategy.comp_matrices.update(original_comps)
+                sample_data = self._workspace._sample_data_lut.get(sample_id)
+                if not sample_data:
+                    logger.debug(f"Retry skip: no sample_data for {sample_id}")
+                    return False
+
+                gating_strategy = sample_data.get('gating_strategy')
+                if not gating_strategy:
+                    logger.debug(f"Retry skip: no gating_strategy for {sample_id}")
+                    return False
+
+                if not gating_strategy.comp_matrices:
+                    logger.debug(f"Retry skip: no comp_matrices for {sample_id}")
+                    return False
+
+                # Get the sample's actual fluorochrome channel labels
+                sample = self._workspace.get_sample(sample_id)
+                fluoro_labels = [sample.pnn_labels[i] for i in sample.fluoro_indices]
+                n = len(fluoro_labels)
+                if n == 0:
+                    logger.debug(f"Retry skip: no fluoro channels for {sample_id}")
+                    return False
+
+                # Save originals, replace with identity matrices
+                original_comps = dict(gating_strategy.comp_matrices)
+                identity_data = np.eye(n)
+
+                for comp_ref in list(gating_strategy.comp_matrices.keys()):
+                    identity_matrix = FKMatrix(
+                        identity_data,
+                        fluoro_labels,
+                        fluorochromes=fluoro_labels
+                    )
+                    gating_strategy.comp_matrices[comp_ref] = identity_matrix
+
+                try:
+                    with self._workspace_analysis_lock:
+                        self._workspace.analyze_samples(sample_id=sample_id)
+                    logger.info(f"Successfully analyzed {sample_id} with identity compensation (uncompensated)")
+                    return True
+                except Exception as retry_e:
+                    logger.warning(f"Retry with identity comp also failed for {sample_id}: {retry_e}")
+                    # Restore original comp matrices
+                    gating_strategy.comp_matrices.update(original_comps)
+                    return False
+            except Exception as access_e:
+                logger.debug(f"Cannot access FlowKit internals for {sample_id}: {access_e}")
                 return False
-        except Exception as access_e:
-            logger.debug(f"Cannot access FlowKit internals for {sample_id}: {access_e}")
-            return False
 
     def _get_cached_events(self, sample_id: str, source: str) -> np.ndarray:
         """Get events from cache or load and cache them.
@@ -1302,11 +1341,12 @@ class WorkspaceModel:
             sample_ids = [s.sample_id for s in self._samples]
 
         # Filter out already-analyzed and already-failed samples
-        with self._failed_samples_lock:
-            samples_to_analyze = [
-                sid for sid in sample_ids
-                if sid not in self._analyzed_samples and sid not in self._failed_samples
-            ]
+        with self._analyzed_samples_lock:
+            with self._failed_samples_lock:
+                samples_to_analyze = [
+                    sid for sid in sample_ids
+                    if sid not in self._analyzed_samples and sid not in self._failed_samples
+                ]
 
         if not samples_to_analyze:
             logger.info("All samples already analyzed")
@@ -1327,7 +1367,8 @@ class WorkspaceModel:
         def analyze_one(sample_id: str) -> Tuple[str, bool, str]:
             """Analyze a single sample. Returns (sample_id, success, error_msg)."""
             try:
-                self._workspace.analyze_samples(sample_id=sample_id)
+                with self._workspace_analysis_lock:
+                    self._workspace.analyze_samples(sample_id=sample_id)
                 return (sample_id, True, "")
             except Exception as e:
                 if "Detectors must be a subset" in str(e) or "detectors" in str(e).lower():
