@@ -8,7 +8,7 @@ This module provides a delegate that renders:
 """
 
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionButton, QApplication
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPalette
 from PyQt5.QtCore import Qt, QRect, QSize
 
 from .gate_marker_matrix_view import DEPTH_COLORS
@@ -46,7 +46,29 @@ class ColoredGateTreeDelegate(QStyledItemDelegate):
 
         # Only apply custom rendering to the gate name column (column 0)
         if index.column() != 0:
+            # Draw themed background for columns 1-3 (matching column 0)
+            colors = get_colors()
+            is_selected = option.state & QStyle.State_Selected
+            is_hovered = option.state & QStyle.State_MouseOver
+
+            if is_selected:
+                painter.fillRect(option.rect, QColor(colors["selection"]))
+            elif is_hovered:
+                painter.fillRect(option.rect, QColor(colors["hover"]))
+            else:
+                alt_row_color = colors.get("alt_row", "#FFF5F8")
+                bg_color = colors.get("background", "#FFFFFF")
+                if index.row() % 2 == 0:
+                    painter.fillRect(option.rect, QColor(bg_color))
+                else:
+                    painter.fillRect(option.rect, QColor(alt_row_color))
+
             painter.restore()
+
+            # Set palette text color for theme awareness
+            text_color = QColor(colors.get("text_primary", "#333333"))
+            option.palette.setColor(QPalette.Text, text_color)
+            option.palette.setColor(QPalette.WindowText, text_color)
             super().paint(painter, option, index)
             return
 

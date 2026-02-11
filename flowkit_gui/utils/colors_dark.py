@@ -30,7 +30,7 @@ COLORS = {
 
     # Interactive states
     "selection": "#3A1A2A",         # Dark pink selection
-    "alt_row": "#252525",           # Slightly lighter - alternating rows
+    "alt_row": "#2A1F27",           # Dark rose tint - alternating rows
     "hover": "#2A1A22",             # Darker hover background
 
     # Status colors (slightly adjusted for dark theme visibility)

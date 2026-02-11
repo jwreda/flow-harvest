@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtGui import QPalette
 from PyQt5.QtWidgets import QApplication
 
 try:
@@ -43,6 +44,9 @@ class ThemeManager(QObject):
         super().__init__(parent)
         self._mode = ThemeMode.SYSTEM
         self._cached_system_theme: Optional[str] = None
+
+        # Cache initial system theme for change detection
+        self._cached_system_theme = self._get_system_theme()
 
         # Start system theme monitoring if available
         if HAS_DARKDETECT:
@@ -104,7 +108,13 @@ class ThemeManager(QObject):
             except Exception:
                 pass
 
-        # Default to light if detection fails
+        # Fallback: detect from Qt application palette
+        app = QApplication.instance()
+        if app:
+            window_color = app.palette().color(QPalette.Window)
+            if window_color.lightness() < 128:
+                return "dark"
+
         return "light"
 
     def _start_system_monitoring(self) -> None:

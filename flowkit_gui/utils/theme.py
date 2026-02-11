@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QAbstractItemView, QApplication
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtSvg import QSvgRenderer
@@ -112,6 +112,9 @@ def generate_stylesheet(theme: str = None) -> str:
     stylesheet = template
     for key, value in colors.items():
         stylesheet = stylesheet.replace(f"{{{key}}}", value)
+
+    # Convert template-escaped braces to actual CSS braces
+    stylesheet = stylesheet.replace("{{", "{").replace("}}", "}")
 
     return stylesheet
 
@@ -224,14 +227,24 @@ def apply_theme(app: QApplication) -> None:
     saved_mode = settings.get_theme_mode()
     theme_manager.set_mode(saved_mode)
 
-    # Connect theme changes to stylesheet updates
+    # Connect theme changes to stylesheet updates + viewport refresh
     def on_theme_changed(theme: str):
         clear_icon_cache()  # Clear cache so icons re-render with new theme colors
         stylesheet = generate_stylesheet(theme)
         if stylesheet:
             app.setStyleSheet(stylesheet)
+        # Force all tree/table viewports to repaint (delegates fetch colors dynamically)
+        for widget in app.topLevelWidgets():
+            for child in widget.findChildren(QAbstractItemView):
+                child.viewport().update()
 
     theme_manager.theme_changed.connect(on_theme_changed)
+
+    # React to macOS system theme changes via Qt palette signal
+    def on_palette_changed():
+        theme_manager.refresh_system_theme()
+
+    app.paletteChanged.connect(on_palette_changed)
 
     # Apply initial stylesheet
     stylesheet = generate_stylesheet()

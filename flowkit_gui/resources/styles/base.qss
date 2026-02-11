@@ -202,10 +202,12 @@ QTreeView::branch:has-children:open {{
 /* Gate tree view - let custom delegate handle all item painting */
 QTreeView#gateTreeView::item {{
     background: transparent;
+    color: {text_primary};
 }}
 
 QTreeView#gateTreeView::item:selected {{
     background: transparent;
+    color: {primary_hover};
 }}
 
 QTreeView#gateTreeView::item:hover {{

@@ -813,7 +813,7 @@ class SampleSelectionModel(QStandardItemModel):
                     if events_item:
                         if count > 0:
                             events_item.setText(f"{count:,}")
-                            events_item.setForeground(QBrush(QColor("#000000")))
+                            events_item.setData(None, Qt.ForegroundRole)
                         else:
                             events_item.setText("No data")
                             events_item.setForeground(QBrush(QColor("#888888")))

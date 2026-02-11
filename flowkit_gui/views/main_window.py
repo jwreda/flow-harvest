@@ -35,6 +35,7 @@ from ..models.gate_marker_matrix_model import GateMarkerMatrixModel
 from .gate_marker_matrix_view import GateMarkerMatrixView, DEPTH_COLORS
 from .styled_tree_delegate import AccentedTreeItemDelegate
 from .colored_gate_tree_delegate import ColoredGateTreeDelegate
+from .gate_tree_view import GateTreeView
 from .export_summary_dialog import ExportSummaryDialog
 from ..exporters.xlsx_exporter import XLSXExporter
 from ..exporters.export_config import ExportConfig
@@ -682,7 +683,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(header)
 
         # Tree view
-        self._gate_tree_view = QTreeView()
+        self._gate_tree_view = GateTreeView()
         self._gate_tree_view.setObjectName("gateTreeView")  # For CSS targeting
         self._gate_tree_view.setModel(self._gate_tree_model)
         self._gate_tree_view.setAnimated(True)
@@ -1278,6 +1279,7 @@ class MainWindow(QMainWindow):
         self._theme_indicator.setObjectName("themeIndicator")
         self._statusbar.addPermanentWidget(self._theme_indicator)
         self._update_theme_indicator()
+        get_theme_manager().theme_changed.connect(lambda _: self._update_theme_indicator())
 
     def _update_ui_state(self):
         """Update UI enabled states based on loaded data."""
