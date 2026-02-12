@@ -67,16 +67,8 @@ FCS_EXTENSIONS = ('.fcs', '.FCS', '.Fcs')  # Supported FCS file extensions
 # Split between event cache (70%) and membership cache (30%)
 CACHE_MEMORY_LIMIT_MB = 4096  # 4GB default
 
-# Batch size for sample analysis
-# Smaller batches use less peak memory but take slightly longer
-BATCH_SIZE = 10  # Samples per batch
-
 # Garbage collection interval (number of samples between gc.collect() calls)
 GC_COLLECT_INTERVAL = 5
-
-# Streaming export threshold
-# Use write_only mode when total rows exceed this threshold
-STREAMING_EXPORT_ROW_THRESHOLD = 5000
 
 # Maximum workers for parallel sample analysis
 # None = auto-detect (min of 4 and CPU count)

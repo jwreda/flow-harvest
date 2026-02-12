@@ -16,6 +16,7 @@ import pandas as pd
 from flowkit_gui.models.workspace_model import Sample, GateInfo
 from flowkit_gui.models.keywords_model import KeywordsModel
 from flowkit_gui.models.statistics_model import MFIMetric
+from flowkit_gui.exporters.xlsx_exporter import XLSXExporter
 
 
 # Mock WorkspaceModel for testing without FlowKit dependency
@@ -796,6 +797,56 @@ class TestXLSXExporterSummary:
 
         # Should include unique channels from both selected and all markers
         assert summary.statistics.channels_analyzed == 4
+
+
+class TestXLSXExporterValueSanitization:
+    """Tests for _sanitize_value ensuring safe openpyxl serialization."""
+
+    def setup_method(self):
+        import numpy as np
+        self.np = np
+
+    def test_nan_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(float('nan')) == ""
+
+    def test_none_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(None) == ""
+
+    def test_np_nan_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(self.np.nan) == ""
+
+    def test_inf_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(float('inf')) == ""
+
+    def test_neg_inf_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(float('-inf')) == ""
+
+    def test_np_inf_returns_empty_string(self):
+        assert XLSXExporter._sanitize_value(self.np.inf) == ""
+
+    def test_np_int64_returns_python_int(self):
+        val = XLSXExporter._sanitize_value(self.np.int64(42))
+        assert val == 42
+        assert type(val) is int
+
+    def test_np_float64_returns_python_float(self):
+        val = XLSXExporter._sanitize_value(self.np.float64(3.14))
+        assert val == 3.14
+        assert type(val) is float
+
+    def test_normal_int_passes_through(self):
+        assert XLSXExporter._sanitize_value(42) == 42
+
+    def test_normal_float_passes_through(self):
+        assert XLSXExporter._sanitize_value(3.14) == 3.14
+
+    def test_normal_string_passes_through(self):
+        assert XLSXExporter._sanitize_value("hello") == "hello"
+
+    def test_long_string_truncated(self):
+        long_str = "x" * 40000
+        result = XLSXExporter._sanitize_value(long_str)
+        assert len(result) == 32767
 
 
 if __name__ == "__main__":

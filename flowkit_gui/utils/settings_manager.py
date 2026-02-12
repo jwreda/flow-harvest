@@ -4,7 +4,6 @@ Settings Manager for FlowKit GUI.
 Provides persistent settings storage using QSettings with:
 - Theme preferences
 - Recent files list
-- Wizard/Advanced mode preference
 - Window geometry
 """
 
@@ -30,7 +29,6 @@ class SettingsManager:
     KEY_THEME_MODE = "theme/mode"
     KEY_RECENT_FILES = "files/recent"
     KEY_MAX_RECENT_FILES = "files/max_recent"
-    KEY_WIZARD_MODE = "ui/wizard_mode"
     KEY_WINDOW_GEOMETRY = "ui/window_geometry"
     KEY_WINDOW_STATE = "ui/window_state"
     KEY_SPLITTER_STATE = "ui/splitter_state"
@@ -39,7 +37,6 @@ class SettingsManager:
     # Performance settings keys
     KEY_PERFORMANCE_PRESET = "performance/preset"
     KEY_CACHE_LIMIT_MB = "performance/cache_limit_mb"
-    KEY_BATCH_SIZE = "performance/batch_size"
     KEY_GC_INTERVAL = "performance/gc_interval"
     KEY_MAX_WORKERS = "performance/max_workers"
 
@@ -142,27 +139,6 @@ class SettingsManager:
             files.remove(file_path)
             self._settings.setValue(self.KEY_RECENT_FILES, files)
 
-    # UI mode
-
-    def get_wizard_mode(self) -> bool:
-        """
-        Get wizard mode preference.
-
-        Returns:
-            True if wizard mode should be used, False for advanced mode
-            Defaults to True for new installs
-        """
-        return self._settings.value(self.KEY_WIZARD_MODE, True, type=bool)
-
-    def set_wizard_mode(self, enabled: bool) -> None:
-        """
-        Save wizard mode preference.
-
-        Args:
-            enabled: True for wizard mode, False for advanced mode
-        """
-        self._settings.setValue(self.KEY_WIZARD_MODE, enabled)
-
     # Window state
 
     def get_window_geometry(self) -> Optional[QByteArray]:
@@ -221,14 +197,6 @@ class SettingsManager:
     def set_cache_limit_mb(self, value: int) -> None:
         """Save cache limit in MB."""
         self._settings.setValue(self.KEY_CACHE_LIMIT_MB, value)
-
-    def get_batch_size(self) -> int:
-        """Get saved batch size (defaults to 10)."""
-        return self._settings.value(self.KEY_BATCH_SIZE, 10, type=int)
-
-    def set_batch_size(self, value: int) -> None:
-        """Save batch size."""
-        self._settings.setValue(self.KEY_BATCH_SIZE, value)
 
     def get_gc_interval(self) -> int:
         """Get saved GC interval (defaults to 5)."""

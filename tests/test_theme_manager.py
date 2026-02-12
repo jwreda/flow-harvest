@@ -157,16 +157,6 @@ class TestSettingsManager:
         # Clean up
         manager.clear_recent_files()
 
-    def test_wizard_mode_default(self, qapp):
-        """Test that wizard mode defaults to True."""
-        from flowkit_gui.utils.settings_manager import SettingsManager
-
-        manager = SettingsManager()
-        # Default should be True for new installs
-        # (Note: this may fail if settings already exist)
-        initial = manager.get_wizard_mode()
-        assert isinstance(initial, bool)
-
 
 class TestColorPalettes:
     """Tests for color palette files."""

@@ -12,6 +12,7 @@ This module provides:
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Callable, Dict, Any
+import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -1358,6 +1359,21 @@ class XLSXExporter:
             adjusted_width = min(max_length + 2, max_width)
             ws.column_dimensions[column].width = adjusted_width
 
+    @staticmethod
+    def _sanitize_value(val):
+        """Sanitize a cell value for safe openpyxl serialization."""
+        if pd.isna(val):
+            return ""
+        if isinstance(val, (float, np.floating)) and np.isinf(val):
+            return ""
+        if isinstance(val, np.integer):
+            return int(val)
+        if isinstance(val, np.floating):
+            return float(val)
+        if isinstance(val, str) and len(val) > 32767:
+            return val[:32767]
+        return val
+
     def _write_dataframe_rows(
         self,
         ws,
@@ -1370,29 +1386,23 @@ class XLSXExporter:
         This method streams rows one at a time to avoid memory spikes from
         creating full copies of the data (e.g., via df.values.tolist()).
 
+        All values are sanitized to ensure valid OOXML output (no NaN, inf,
+        or raw numpy types that would corrupt the xlsx file).
+
         Args:
             ws: Worksheet to write to
             df: DataFrame containing the data
             decimal_places: If provided, round float values to this many places
-                           and replace NaN with empty strings
         """
-        if decimal_places is not None:
-            # Preprocess: round floats and handle NaN in one pass
-            def convert_value(val):
-                if pd.isna(val):
-                    return ""
-                elif isinstance(val, float):
-                    return round(val, decimal_places)
-                return val
-
-            # Stream row-by-row to avoid memory spike from tolist()
-            for idx in range(len(df)):
-                row = df.iloc[idx].values
-                ws.append([convert_value(v) for v in row])
-        else:
-            # Simple case: use dataframe_to_rows (already imported)
-            for row in dataframe_to_rows(df, index=False, header=False):
-                ws.append(row)
+        for idx in range(len(df)):
+            row = df.iloc[idx].values
+            if decimal_places is not None:
+                ws.append([
+                    round(v, decimal_places) if isinstance(v := self._sanitize_value(cell), float) else v
+                    for cell in row
+                ])
+            else:
+                ws.append([self._sanitize_value(v) for v in row])
 
     def _remove_percent_total_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
