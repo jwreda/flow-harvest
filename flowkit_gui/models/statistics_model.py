@@ -595,6 +595,23 @@ class StatisticsModel:
             return self._statistics[sample_id][gate_id]
         return None
 
+    def _resolve_gate_stats(self, sample_id: str, gate_id: str) -> Tuple[int, float, float]:
+        """
+        Resolve gate stats from precomputed cache when available, else workspace.
+
+        Returns:
+            Tuple of (count, percent_parent, percent_total)
+        """
+        cached = self.get_gate_statistics(sample_id, gate_id)
+        if cached is not None:
+            return cached.event_count, cached.percent_of_parent, cached.percent_of_total
+
+        stats = self._workspace.get_gate_statistics(sample_id, gate_id)
+        count = int(stats.get('count', 0) or 0)
+        percent_parent = float(stats.get('percent_parent', 0.0) or 0.0)
+        percent_total = float(stats.get('percent_total', 0.0) or 0.0)
+        return count, percent_parent, percent_total
+
     def get_warnings(self) -> List[str]:
         """Get list of warnings/errors from calculation."""
         return self._warnings.copy()
@@ -664,14 +681,14 @@ class StatisticsModel:
             # Add frequency data for each gate
             for gate_id in gate_ids:
                 try:
-                    stats = self._workspace.get_gate_statistics(sample_id, gate_id)
+                    count, percent_parent, _ = self._resolve_gate_stats(sample_id, gate_id)
                     gate_path = gate_paths.get(gate_id, gate_id)
 
                     # Add columns based on data_type
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.COUNTS):
-                        row[f"{gate_path}_count"] = stats.get('count', 0)
+                        row[f"{gate_path}_count"] = count
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.PERCENT):
-                        row[f"{gate_path}_%parent"] = stats.get('percent_parent', 0.0)
+                        row[f"{gate_path}_%parent"] = percent_parent
                 except Exception as e:
                     gate_path = gate_paths.get(gate_id, gate_id)
                     logger.warning(f"Failed to get stats for {sample_id}/{gate_id}: {e}")
@@ -715,7 +732,7 @@ class StatisticsModel:
             # Add a row for each gate
             for gate_id in gate_ids:
                 try:
-                    stats = self._workspace.get_gate_statistics(sample_id, gate_id)
+                    count, percent_parent, _ = self._resolve_gate_stats(sample_id, gate_id)
                     gate_path = gate_paths.get(gate_id, gate_id)
 
                     row = {
@@ -727,9 +744,9 @@ class StatisticsModel:
 
                     # Add columns based on data_type
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.COUNTS):
-                        row['count'] = stats.get('count', 0)
+                        row['count'] = count
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.PERCENT):
-                        row['%parent'] = stats.get('percent_parent', 0.0)
+                        row['%parent'] = percent_parent
 
                     # Add keywords
                     row.update(keywords)
@@ -827,8 +844,7 @@ class StatisticsModel:
 
                 # Get reference gate count
                 try:
-                    ref_stats = self._workspace.get_gate_statistics(sample_id, ref_gate_id)
-                    ref_count = ref_stats.get('count', 0)
+                    ref_count, _, _ = self._resolve_gate_stats(sample_id, ref_gate_id)
                 except Exception as e:
                     logger.warning(f"Failed to get reference stats for {sample_id}/{ref_gate_id}: {e}")
                     ref_count = 0
@@ -845,8 +861,7 @@ class StatisticsModel:
 
                     # Get descendant count
                     try:
-                        desc_stats = self._workspace.get_gate_statistics(sample_id, desc_gate_id)
-                        desc_count = desc_stats.get('count', 0)
+                        desc_count, _, _ = self._resolve_gate_stats(sample_id, desc_gate_id)
                     except Exception as e:
                         logger.warning(f"Failed to get descendant stats for {sample_id}/{desc_gate_id}: {e}")
                         desc_count = 0
@@ -943,8 +958,7 @@ class StatisticsModel:
 
                 # Get reference gate count
                 try:
-                    ref_stats = self._workspace.get_gate_statistics(sample_id, ref_gate_id)
-                    ref_count = ref_stats.get('count', 0)
+                    ref_count, _, _ = self._resolve_gate_stats(sample_id, ref_gate_id)
                 except Exception as e:
                     logger.warning(f"Failed to get reference stats for {sample_id}/{ref_gate_id}: {e}")
                     ref_count = 0
@@ -961,8 +975,7 @@ class StatisticsModel:
 
                     # Get descendant count
                     try:
-                        desc_stats = self._workspace.get_gate_statistics(sample_id, desc_gate_id)
-                        desc_count = desc_stats.get('count', 0)
+                        desc_count, _, _ = self._resolve_gate_stats(sample_id, desc_gate_id)
                     except Exception as e:
                         logger.warning(f"Failed to get descendant stats for {sample_id}/{desc_gate_id}: {e}")
                         desc_count = 0

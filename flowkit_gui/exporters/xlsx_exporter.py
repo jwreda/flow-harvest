@@ -1394,8 +1394,7 @@ class XLSXExporter:
             df: DataFrame containing the data
             decimal_places: If provided, round float values to this many places
         """
-        for idx in range(len(df)):
-            row = df.iloc[idx].values
+        for row in df.itertuples(index=False, name=None):
             if decimal_places is not None:
                 ws.append([
                     round(v, decimal_places) if isinstance(v := self._sanitize_value(cell), float) else v

@@ -213,7 +213,11 @@ class WorkspaceModel:
         self._wsp_path: Optional[Path] = None
         self._fcs_dir: Optional[Path] = None
         self._samples: List[Sample] = []
+        self._sample_by_id: Dict[str, Sample] = {}
         self._gates: List[GateInfo] = []
+        self._gate_by_id: Dict[str, GateInfo] = {}
+        self._fk_gate_path_by_id: Dict[str, Tuple[str, ...]] = {}
+        self._parent_gate_by_id: Dict[str, Optional[str]] = {}
         self._channels: List[str] = []
         self._channel_info: List[ChannelInfo] = []
         # Track which gates exist in which samples (not all gates exist in all samples)
@@ -247,6 +251,27 @@ class WorkspaceModel:
             f"Initialized caches: event={self._event_cache.memory_limit_mb:.0f}MB, "
             f"membership={self._membership_cache.memory_limit_mb:.0f}MB"
         )
+
+    def _rebuild_sample_lookup(self) -> None:
+        """Rebuild fast sample lookup map from the current sample list."""
+        self._sample_by_id = {sample.sample_id: sample for sample in self._samples}
+
+    def _rebuild_gate_lookups(self) -> None:
+        """Rebuild fast gate lookup maps from the current gate list."""
+        self._gate_by_id = {}
+        self._fk_gate_path_by_id = {}
+        self._parent_gate_by_id = {}
+
+        for gate in self._gates:
+            self._gate_by_id[gate.gate_id] = gate
+            self._fk_gate_path_by_id[gate.gate_id] = gate.fk_gate_path
+            if gate.parent_id is not None:
+                parent_id = gate.parent_id
+            elif len(gate.path) > 1:
+                parent_id = "/".join(gate.path[:-1])
+            else:
+                parent_id = None
+            self._parent_gate_by_id[gate.gate_id] = parent_id
 
     @property
     def is_loaded(self) -> bool:
@@ -571,13 +596,15 @@ class WorkspaceModel:
         sample = self._workspace.get_sample(sample_id)
         all_events = sample.get_events(source=source)
         all_labels = list(sample.pnn_labels) if hasattr(sample, 'pnn_labels') else []
+        label_to_idx = {label: idx for idx, label in enumerate(all_labels)}
 
         # Filter to requested channels
         channel_indices = []
         found_channels = []
         for ch in channels:
-            if ch in all_labels:
-                channel_indices.append(all_labels.index(ch))
+            idx = label_to_idx.get(ch)
+            if idx is not None:
+                channel_indices.append(idx)
                 found_channels.append(ch)
 
         if not channel_indices:
@@ -749,6 +776,7 @@ class WorkspaceModel:
 
         # Sort samples naturally by name (e.g., A1, A2, A10 not A1, A10, A2)
         self._samples = natsorted(self._samples, key=lambda s: s.name, alg=ns.IGNORECASE)
+        self._rebuild_sample_lookup()
 
         # Populate gates from metadata
         self._gates = []
@@ -758,8 +786,10 @@ class WorkspaceModel:
                 name=gate_meta.name,
                 path=gate_meta.path,
                 gate_type=gate_meta.gate_type,
+                parent_id="/".join(gate_meta.path[:-1]) if len(gate_meta.path) > 1 else None,
                 parameters=[]  # Parameters require FCS data
             ))
+        self._rebuild_gate_lookups()
 
         logger.info(
             f"Metadata loaded: {len(self._samples)} samples, "
@@ -923,6 +953,7 @@ class WorkspaceModel:
 
         # Sort samples naturally by name (e.g., A1, A2, A10 not A1, A10, A2)
         self._samples = natsorted(self._samples, key=lambda s: s.name, alg=ns.IGNORECASE)
+        self._rebuild_sample_lookup()
         logger.debug(f"Sorted {len(self._samples)} samples by natural order")
 
         logger.info(f"Sample extraction complete: {samples_with_data} with data, {samples_without_data} without data")
@@ -940,6 +971,7 @@ class WorkspaceModel:
         self._sample_gates = {}
 
         if not self._samples:
+            self._rebuild_gate_lookups()
             return
 
         # Track all unique gates and which samples have them
@@ -989,6 +1021,7 @@ class WorkspaceModel:
                                 name=gate_name,  # Keep original name for display
                                 path=path_tuple,
                                 gate_type=gate_type,
+                                parent_id="/".join(path_tuple[:-1]) if len(path_tuple) > 1 else None,
                                 parameters=params,
                                 fk_gate_path=gate_path_tuple  # Store FlowKit's path for API calls
                             )
@@ -1003,6 +1036,7 @@ class WorkspaceModel:
 
         # Convert to list (preserves order from dict in Python 3.7+)
         self._gates = list(all_gate_info.values())
+        self._rebuild_gate_lookups()
 
         # Log gate availability summary with type breakdown
         total_gates = len(self._gates)
@@ -1083,17 +1117,11 @@ class WorkspaceModel:
 
     def get_sample_by_id(self, sample_id: str) -> Optional[Sample]:
         """Get a sample by its ID."""
-        for sample in self._samples:
-            if sample.sample_id == sample_id:
-                return sample
-        return None
+        return self._sample_by_id.get(sample_id)
 
     def get_fk_gate_path(self, gate_id: str) -> Optional[Tuple[str, ...]]:
         """Get the FlowKit gate_path tuple for API calls."""
-        for gate in self._gates:
-            if gate.gate_id == gate_id:
-                return gate.fk_gate_path
-        return None
+        return self._fk_gate_path_by_id.get(gate_id)
 
     def gate_exists_for_sample(self, sample_id: str, gate_id: str) -> bool:
         """Check if a gate exists for a specific sample.
@@ -1145,11 +1173,7 @@ class WorkspaceModel:
             List of GateInfo objects that are descendants
         """
         # Find the reference gate
-        reference_gate = None
-        for gate in self._gates:
-            if gate.gate_id == reference_gate_id:
-                reference_gate = gate
-                break
+        reference_gate = self._gate_by_id.get(reference_gate_id)
 
         if not reference_gate:
             return []
@@ -1492,16 +1516,10 @@ class WorkspaceModel:
 
     def _get_parent_gate_info(self, gate_id: str) -> Tuple[Optional[str], Optional[Tuple[str, ...]]]:
         """Get the parent gate ID (full path) and FlowKit path for a given gate."""
-        for gate in self._gates:
-            if gate.gate_id == gate_id and gate.depth > 0:
-                # Construct parent gate_id from path (e.g., "Cells/Live/CD45+" -> "Cells/Live")
-                parent_path = gate.path[:-1]  # All but last element
-                if parent_path:
-                    parent_gate_id = "/".join(parent_path)
-                    # Find the parent gate's fk_gate_path
-                    parent_fk_path = self.get_fk_gate_path(parent_gate_id)
-                    return parent_gate_id, parent_fk_path
-        return None, None
+        parent_gate_id = self._parent_gate_by_id.get(gate_id)
+        if parent_gate_id is None:
+            return None, None
+        return parent_gate_id, self.get_fk_gate_path(parent_gate_id)
 
     def _get_sample_event_count(self, sample_id: str) -> int:
         """Get total event count for a sample."""
@@ -1653,6 +1671,7 @@ class WorkspaceModel:
 
             # Get channel labels
             all_labels = list(sample.pnn_labels) if hasattr(sample, 'pnn_labels') else []
+            label_to_idx = {label: idx for idx, label in enumerate(all_labels)}
             logger.debug(f"Available channels: {all_labels}")
 
             if channels:
@@ -1662,8 +1681,9 @@ class WorkspaceModel:
                 missing_channels = []
 
                 for ch in channels:
-                    if ch in all_labels:
-                        channel_indices.append(all_labels.index(ch))
+                    idx = label_to_idx.get(ch)
+                    if idx is not None:
+                        channel_indices.append(idx)
                         found_channels.append(ch)
                     else:
                         missing_channels.append(ch)
