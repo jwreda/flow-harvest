@@ -39,6 +39,7 @@ from .gate_tree_view import GateTreeView
 from .export_summary_dialog import ExportSummaryDialog
 from ..exporters.xlsx_exporter import XLSXExporter
 from ..exporters.export_config import ExportConfig
+from ..controllers.export_controller import ExportController
 from ..utils.logging_config import setup_logging, get_logger
 from ..utils.theme import get_icon, cycle_theme, set_theme_mode, get_current_mode
 from ..utils.theme_manager import ThemeMode, get_theme_manager
@@ -411,6 +412,15 @@ class MainWindow(QMainWindow):
         self._sample_selection_model = SampleSelectionModel()
         self._gate_marker_matrix_model = GateMarkerMatrixModel()
 
+        # Controllers
+        self._export_controller = ExportController(
+            self._workspace_model,
+            self._keywords_model,
+            self._sample_selection_model,
+            self._gate_tree_model,
+            self._gate_marker_matrix_model,
+        )
+
         # UI state
         self._selected_markers: List[str] = []
         self._marker_checkboxes: dict = {}
@@ -425,6 +435,27 @@ class MainWindow(QMainWindow):
 
         # Initial state
         self._update_ui_state()
+
+        # Restore window geometry from settings
+        settings = get_settings()
+        geometry = settings.get_window_geometry()
+        if geometry:
+            self.restoreGeometry(geometry)
+        state = settings.get_window_state()
+        if state:
+            self.restoreState(state)
+        splitter_state = settings.get_splitter_state()
+        if splitter_state and hasattr(self, '_main_splitter'):
+            self._main_splitter.restoreState(splitter_state)
+
+    def closeEvent(self, event):
+        """Save window geometry and state before closing."""
+        settings = get_settings()
+        settings.set_window_geometry(self.saveGeometry())
+        settings.set_window_state(self.saveState())
+        if hasattr(self, '_main_splitter') and self._main_splitter:
+            settings.set_splitter_state(self._main_splitter.saveState())
+        super().closeEvent(event)
 
     def _init_menu(self):
         """Initialize menu bar."""
@@ -533,19 +564,19 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
 
         # Main splitter (horizontal)
-        splitter = QSplitter(Qt.Horizontal)
+        self._main_splitter = QSplitter(Qt.Horizontal)
 
         # Left panel - Gate tree
         left_panel = self._create_gate_panel()
-        splitter.addWidget(left_panel)
+        self._main_splitter.addWidget(left_panel)
 
         # Right panel - Sample info and options
         right_panel = self._create_right_panel()
-        splitter.addWidget(right_panel)
+        self._main_splitter.addWidget(right_panel)
 
-        splitter.setSizes([450, 750])
+        self._main_splitter.setSizes([450, 750])
 
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(self._main_splitter)
 
         # Bottom panel - Export button and options
         bottom_layout = QHBoxLayout()
@@ -2291,8 +2322,9 @@ class MainWindow(QMainWindow):
     def _apply_config_defaults_from_ui(self):
         """Write the current preset values into config.defaults module."""
         preset = self._perf_btn_group.checkedId()
-        cache_mb, _batch, gc_int, workers = self._PERF_PRESETS.get(preset, self._PERF_PRESETS[0])
+        cache_mb, batch_size, gc_int, workers = self._PERF_PRESETS.get(preset, self._PERF_PRESETS[0])
         config_defaults.CACHE_MEMORY_LIMIT_MB = cache_mb
+        config_defaults.BATCH_SIZE = batch_size
         config_defaults.GC_COLLECT_INTERVAL = gc_int
         config_defaults.MAX_PARALLEL_WORKERS = None if workers == 0 else workers
 
@@ -2309,7 +2341,7 @@ class MainWindow(QMainWindow):
         self._apply_config_defaults_from_ui()
 
         # Get preset values for display
-        cache_mb, _batch, gc_int, workers = self._PERF_PRESETS.get(preset, self._PERF_PRESETS[0])
+        cache_mb, batch_size, gc_int, workers = self._PERF_PRESETS.get(preset, self._PERF_PRESETS[0])
 
         # If workspace is loaded, update live cache limits and clear
         if self._workspace_model.is_loaded:
@@ -2382,81 +2414,95 @@ class MainWindow(QMainWindow):
         """Get list of selected keywords for export."""
         return [item.text() for item in self._keyword_selection_list.selectedItems()]
 
-    def _on_export(self):
-        """Handle export action."""
-        # Validate sample selection
-        selected_sample_ids = self._sample_selection_model.get_selected_sample_ids()
-        if not selected_sample_ids:
-            QMessageBox.warning(
-                self,
-                "No Samples Selected",
-                "Please select at least one sample to export."
-            )
-            return
+    def _gather_export_ui_state(self) -> dict:
+        """Collect all export-related UI state into a plain dictionary.
 
-        # Validate gate selection (from gate tree)
-        selected_gates = self._gate_tree_model.get_selected_gates()
-        if not selected_gates:
-            QMessageBox.warning(
-                self,
-                "No Gates Selected",
-                "Please select at least one gate to export."
-            )
-            return
-
+        This keeps UI widget reads in MainWindow while letting
+        ExportController work with a simple dict (no PyQt5 dependency).
+        """
         mfi_metrics = self._get_selected_mfi_metrics()
-        if not mfi_metrics:
-            QMessageBox.warning(
-                self,
-                "No MFI Metrics Selected",
-                "Please select at least one MFI metric."
-            )
+        data_source = self._get_selected_data_source()
+        matrix_selections = self._gate_marker_matrix_model.get_selections()
+        selected_sample_ids = self._sample_selection_model.get_selected_sample_ids()
+
+        # Bead normalization UI values
+        bead_normalize = self._bead_normalize_checkbox.isChecked()
+        bead_gate_id = None
+        bead_user_number = 1000.0
+        bead_mode = "per_n_beads"
+        if bead_normalize:
+            bead_gate_id = self._bead_gate_combo.currentData()
+            bead_user_number = self._bead_number_spin.value()
+            bead_mode = "per_n_beads" if self._bead_per_n_radio.isChecked() else "per_well"
+
+        # Scale factors snapshot
+        scale_factors = None
+        if self._scale_factor_checkbox.isChecked():
+            scale_factors = self._sample_selection_model.get_scale_factors()
+
+        return {
+            "mfi_metrics": mfi_metrics,
+            "data_source": data_source,
+            "matrix_selections": matrix_selections,
+            "selected_markers": self._get_selected_markers(),
+            "include_wide_keywords": self._wide_keywords_check.isChecked(),
+            "include_tidy_frequencies": self._tidy_frequencies_check.isChecked(),
+            "include_all_sheets": self._include_all_sheets_checkbox.isChecked(),
+            "index_columns": self._get_selected_index_columns(),
+            "selected_keywords": self._get_selected_export_keywords(),
+            "reference_gate_ids": self._gate_tree_model.get_reference_gates(),
+            "descendant_depth": self._get_descendant_depth(),
+            "volume_normalize": self._volume_normalize_checkbox.isChecked(),
+            "volume_denominator": self._volume_denominator_spinbox.value(),
+            "bead_normalize": bead_normalize,
+            "bead_gate_id": bead_gate_id,
+            "bead_user_number": bead_user_number,
+            "bead_mode": bead_mode,
+            "scale_factors": scale_factors,
+            "selected_sample_ids": selected_sample_ids,
+            "allowed_system_keywords": self._load_system_keywords_settings(),
+        }
+
+    def _on_export(self):
+        """Handle export action.
+
+        Thin UI orchestrator that delegates business logic to ExportController.
+        """
+        # 1. Gather UI state
+        ui_state = self._gather_export_ui_state()
+
+        # 2. Validate preconditions
+        error = self._export_controller.validate_export_preconditions(ui_state)
+        if error:
+            QMessageBox.warning(self, "Export Error", error)
             return
 
-        # Get matrix selections (gate/marker combinations)
-        matrix_selections = self._gate_marker_matrix_model.get_selections()
+        selected_sample_ids = ui_state["selected_sample_ids"]
 
-        # Check compensation status if using Force Compensated
-        data_source = self._get_selected_data_source()
-        if data_source == DataSource.COMP:
-            summary = self._sample_selection_model.get_selection_summary()
-            missing_comp = summary.get("missing_compensation", 0)
-            if missing_comp > 0:
-                result = QMessageBox.warning(
-                    self,
-                    "Compensation Warning",
-                    f"{missing_comp} selected sample(s) are missing compensation.\n\n"
-                    "Export will fail for these samples with 'Force Compensated' mode.\n\n"
-                    "Continue anyway?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                if result == QMessageBox.No:
-                    return
+        # 3. Check compensation warnings
+        comp_warning = self._export_controller.check_compensation_warning(ui_state)
+        if comp_warning:
+            result = QMessageBox.warning(
+                self,
+                "Compensation Warning",
+                comp_warning,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if result == QMessageBox.No:
+                return
 
-        # Check for gates that don't exist in any selected sample
-        gate_ids_initial = self._gate_tree_model.get_selected_gate_ids()
-        gates_to_exclude = self._workspace_model.get_gates_without_data_in_samples(
-            gate_ids=gate_ids_initial,
-            sample_ids=selected_sample_ids
+        # 4. Check for gates without data in selected samples
+        gates_to_exclude, excluded_names, gate_ids_filtered = (
+            self._export_controller.find_gates_without_data(selected_sample_ids)
         )
 
         if gates_to_exclude:
-            # Build readable list of excluded gates
-            excluded_gate_names = []
-            for gate_id in gates_to_exclude:
-                gate = self._gate_tree_model.get_gate_by_id(gate_id)
-                if gate:
-                    excluded_gate_names.append(gate.full_path_string)
-                else:
-                    excluded_gate_names.append(gate_id)
-
-            # Format the message (show up to 5, then "... and X more")
-            if len(excluded_gate_names) <= 5:
-                gate_list = "\n".join(f"  • {name}" for name in excluded_gate_names)
+            if len(excluded_names) <= 5:
+                gate_list = "\n".join(f"  \u2022 {name}" for name in excluded_names)
             else:
-                gate_list = "\n".join(f"  • {name}" for name in excluded_gate_names[:5])
-                gate_list += f"\n  ... and {len(excluded_gate_names) - 5} more"
+                gate_list = "\n".join(f"  \u2022 {name}" for name in excluded_names[:5])
+                gate_list += f"\n  ... and {len(excluded_names) - 5} more"
 
             result = QMessageBox.warning(
                 self,
@@ -2466,193 +2512,73 @@ class MainWindow(QMainWindow):
                 f"{gate_list}\n\n"
                 "Continue with export?",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes  # Default to Yes since this is informational
+                QMessageBox.Yes,
             )
-
             if result == QMessageBox.No:
                 return
 
-            # Filter out excluded gates for the rest of export
-            gate_ids_filtered = [gid for gid in gate_ids_initial if gid not in gates_to_exclude]
-        else:
-            gate_ids_filtered = gate_ids_initial
-
-        # Check if any gates remain after filtering
         if not gate_ids_filtered:
             QMessageBox.warning(
                 self,
                 "No Valid Gates",
                 "None of the selected gates exist in the selected samples.\n\n"
-                "Please select different gates or samples."
+                "Please select different gates or samples.",
             )
             return
 
-        # Get file path
+        # 5. File dialog
         file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export to Excel",
-            "flowkit_export.xlsx",
-            "Excel Files (*.xlsx)"
+            self, "Export to Excel", "flowkit_export.xlsx", "Excel Files (*.xlsx)"
         )
-
         if not file_path:
             return
 
-        # Pre-export memory check
-        num_samples = len(selected_sample_ids)
-        num_gates = len(gate_ids_filtered)
-        estimated_mb = estimate_export_memory(num_samples, num_gates)
-        if not check_memory_available(estimated_mb, operation_name="export"):
+        # 6. Memory check
+        mem_warning = self._export_controller.check_memory(
+            len(selected_sample_ids), len(gate_ids_filtered)
+        )
+        if mem_warning:
             result = QMessageBox.warning(
                 self,
                 "Low Memory Warning",
-                f"This export may require approximately {estimated_mb} MB of memory, "
-                f"but available system memory is low.\n\n"
-                f"Suggestions:\n"
-                f"  - Switch to Low Resource or Minimal mode in Settings > Performance Mode\n"
-                f"  - Close other applications (browser, Zoom, etc.)\n"
-                f"  - Export fewer samples or gates\n\n"
-                f"Continue anyway?",
+                mem_warning,
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if result == QMessageBox.No:
                 return
 
-        # Disable UI during export to prevent reentrancy from processEvents()
+        # 7. Disable UI during export
         self.setEnabled(False)
 
         try:
-            # Use filtered gate_ids from the earlier validation
-            gate_ids = gate_ids_filtered
+            # Inject filtered gate IDs into ui_state for config construction
+            ui_state["gate_ids"] = gate_ids_filtered
 
-            # Extract unique markers from matrix selections (for MFI calculations)
-            # If no matrix selections, fall back to all selected markers
-            if matrix_selections:
-                selected_markers = list(set(channel for _, channel in matrix_selections))
-            else:
-                selected_markers = self._get_selected_markers()
+            # 8. Build config via controller
+            config = self._export_controller.build_export_config(ui_state)
 
-            all_markers = self._workspace_model.channels
-            include_wide_keywords = self._wide_keywords_check.isChecked()
-            include_tidy_frequencies = self._tidy_frequencies_check.isChecked()
-            index_columns = self._get_selected_index_columns() if include_wide_keywords else None
-            selected_keywords = self._get_selected_export_keywords()
-
-            # Get reference gates and depth settings for normalized frequencies
-            reference_gate_ids = self._gate_tree_model.get_reference_gates()
-            descendant_depth = self._get_descendant_depth()
-
-            logger.info(f"Starting export: {len(selected_sample_ids)} samples, {len(gate_ids)} gates")
-            logger.info(f"Matrix selections: {len(matrix_selections)} gate/marker combinations")
-            logger.info(f"Data source: {data_source.value}")
-            logger.info(f"Selected keywords for export: {len(selected_keywords)}")
-            if index_columns:
-                logger.info(f"Index columns for Keywords_Wide: {index_columns}")
-            if reference_gate_ids:
-                logger.info(f"Reference gates for normalization: {reference_gate_ids}")
-                logger.info(f"Descendant depth: {'unlimited' if descendant_depth == 0 else descendant_depth}")
-
-            # Create exporter with selected samples and matrix selections
-            include_all_sheets = self._include_all_sheets_checkbox.isChecked()
-
-            # Update keywords model with allowed system keywords from settings
-            allowed_system_keywords = self._load_system_keywords_settings()
-            self._keywords_model.set_allowed_system_keywords(allowed_system_keywords)
-            logger.info(f"System keywords for export: {allowed_system_keywords}")
-
-            # Get volume normalization settings
-            volume_normalize = self._volume_normalize_checkbox.isChecked()
-            volume_denominator = self._volume_denominator_spinbox.value()
-            if volume_normalize:
-                logger.info(f"Volume normalization enabled: per {volume_denominator} μL")
-
-            # Get bead normalization settings
-            bead_normalize = self._bead_normalize_checkbox.isChecked()
-            bead_gate_id = None
-            bead_user_number = 1000.0
-            bead_mode = "per_n_beads"
-            if bead_normalize:
-                bead_gate_id = self._bead_gate_combo.currentData()
-                bead_user_number = self._bead_number_spin.value()
-                bead_mode = "per_n_beads" if self._bead_per_n_radio.isChecked() else "per_well"
-                if bead_gate_id:
-                    logger.info(
-                        f"Bead normalization enabled: gate={bead_gate_id}, "
-                        f"number={bead_user_number}, mode={bead_mode}"
-                    )
-                else:
-                    # No gate selected - skip bead normalization silently
-                    bead_normalize = False
-                    logger.info("Bead normalization checkbox checked but no gate selected - skipping")
-
-            # Snapshot scale factors at export time for thread safety
-            scale_factors = None
-            if self._scale_factor_checkbox.isChecked():
-                scale_factors = self._sample_selection_model.get_scale_factors()
-                if scale_factors:
-                    logger.info(f"Scale factors enabled for {len(scale_factors)} samples")
-                else:
-                    scale_factors = None  # Normalize empty dict to None
-
-            config = ExportConfig(
-                gate_ids=gate_ids,
-                selected_markers=selected_markers,
-                all_markers=all_markers,
-                mfi_metrics=mfi_metrics,
-                include_wide_keywords=include_wide_keywords,
-                include_tidy_frequencies=include_tidy_frequencies,
-                include_all_sheets=include_all_sheets,
-                data_source=data_source,
-                index_columns=index_columns,
-                selected_keywords=selected_keywords,
-                selected_sample_ids=selected_sample_ids,
-                matrix_selections=matrix_selections,
-                reference_gate_ids=reference_gate_ids,
-                descendant_depth=descendant_depth,
-                volume_normalize=volume_normalize,
-                volume_denominator=volume_denominator,
-                bead_normalize=bead_normalize,
-                bead_gate_id=bead_gate_id,
-                bead_user_number=bead_user_number,
-                bead_mode=bead_mode,
-                scale_factors=scale_factors
-            )
-
-            exporter = XLSXExporter(
-                workspace=self._workspace_model,
-                keywords_model=self._keywords_model,
-                config=config
-            )
-
-            # Pre-analyze samples to detect failures before export
-            effective_workers = config_defaults.MAX_PARALLEL_WORKERS
-
-            # Pre-analyze with UI feedback
+            # 9. Pre-analyze samples with UI feedback
             def analysis_progress(completed, total):
-                self.statusBar().showMessage(f"Analyzing samples ({completed}/{total})...")
+                self.statusBar().showMessage(
+                    f"Analyzing samples ({completed}/{total})..."
+                )
                 QApplication.processEvents()
 
-            if effective_workers is None or effective_workers > 1:
-                self._workspace_model.analyze_samples_parallel(
-                    sample_ids=selected_sample_ids,
-                    max_workers=effective_workers,
-                    progress_callback=analysis_progress
-                )
-            else:
-                # Sequential analysis — still provide feedback
-                for i, sid in enumerate(selected_sample_ids):
-                    self._workspace_model.analyze_samples(sample_ids=[sid])
-                    analysis_progress(i + 1, len(selected_sample_ids))
+            failures = self._export_controller.pre_analyze_samples(
+                selected_sample_ids, progress_callback=analysis_progress
+            )
 
-            # Check for analysis failures
-            failures = self._workspace_model.get_analysis_failures()
             if failures:
-                failure_list = "\n".join([f"  \u2022 {sid}: {err[:80]}" for sid, err in list(failures.items())[:10]])
+                failure_list = "\n".join(
+                    [
+                        f"  \u2022 {sid}: {err[:80]}"
+                        for sid, err in list(failures.items())[:10]
+                    ]
+                )
                 if len(failures) > 10:
                     failure_list += f"\n  ... and {len(failures) - 10} more"
 
-                # Re-enable before showing dialog to avoid focus issues
                 self.setEnabled(True)
                 response = QMessageBox.warning(
                     self,
@@ -2661,19 +2587,20 @@ class MainWindow(QMainWindow):
                     f"incomplete statistics (zeros):\n\n{failure_list}\n\n"
                     f"See flowkit_debug.log for details.\n\nContinue with export?",
                     QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
+                    QMessageBox.No,
                 )
                 if response == QMessageBox.No:
                     return
-                self.setEnabled(False)  # Re-disable before continuing with export
+                self.setEnabled(False)
 
-            # Show progress dialog with detailed status
-            progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
+            # 10. Progress dialog + cancellation
+            progress = QProgressDialog(
+                "Preparing export...", "Cancel", 0, 100, self
+            )
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
-            progress.setMinimumWidth(400)  # Wider to show detailed status
+            progress.setMinimumWidth(400)
 
-            # Create cancellation token for user-initiated cancellation
             cancellation_token = CancellationToken()
 
             def on_cancel():
@@ -2684,38 +2611,32 @@ class MainWindow(QMainWindow):
 
             def update_progress(current, total):
                 progress.setValue(int(current / total * 100))
-                # Check if user cancelled
                 if cancellation_token.is_cancelled:
                     return
 
             def update_status(message):
                 progress.setLabelText(message)
-                # Process events to ensure UI updates during long operations
-                from PyQt5.QtWidgets import QApplication
                 QApplication.processEvents()
 
-            # Export with progress, status, and cancellation callbacks
-            summary = exporter.export(
+            # 11. Execute export via controller
+            summary = self._export_controller.execute_export(
+                config,
                 file_path,
                 progress_callback=update_progress,
                 status_callback=update_status,
-                cancellation_token=cancellation_token
+                cancellation_token=cancellation_token,
             )
 
             progress.close()
 
-            # Show rich summary dialog
+            # 12. Show summary dialog
             summary_dialog = ExportSummaryDialog(summary, parent=self)
             summary_dialog.exec_()
-
-            logger.info(f"Export completed: {file_path}")
 
         except CancellationError:
             logger.info("Export cancelled by user")
             QMessageBox.information(
-                self,
-                "Export Cancelled",
-                "Export was cancelled."
+                self, "Export Cancelled", "Export was cancelled."
             )
         except CompensationError as e:
             logger.error(f"Export failed due to compensation error: {e}")
@@ -2726,22 +2647,17 @@ class MainWindow(QMainWindow):
                 f"Options:\n"
                 f"1. Fix compensation assignments in FlowJo\n"
                 f"2. Switch to 'Auto' mode to fall back to raw data\n"
-                f"3. Switch to 'Force Raw' mode to use uncompensated data"
+                f"3. Switch to 'Force Raw' mode to use uncompensated data",
             )
         except Exception as e:
             logger.error(f"Export failed: {type(e).__name__}: {e}")
-            self.setEnabled(True)  # Re-enable before dialog to avoid focus issues
+            self.setEnabled(True)
             QMessageBox.critical(
-                self,
-                "Export Error",
-                f"Failed to export data:\n{str(e)}"
+                self, "Export Error", f"Failed to export data:\n{str(e)}"
             )
         finally:
-            # Re-enable UI after export completes
             self.setEnabled(True)
-            # Clear caches after export to free memory for large datasets
-            self._workspace_model.clear_data_cache()
-            logger.info("Cleared data caches after export (analysis state preserved)")
+            self._export_controller.clear_data_cache()
 
     def _show_settings_dialog(self):
         """Show the settings dialog for system keywords configuration."""

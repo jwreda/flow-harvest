@@ -624,8 +624,13 @@ QTabBar::tab:first {{
     margin-left: 0;
 }}
 
-/* ===== Focus Indicators ===== */
-*:focus {{
+/* Remove default outline for widgets with custom focus borders */
+QComboBox:focus,
+QLineEdit:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus,
+QTextEdit:focus,
+QPlainTextEdit:focus {{
     outline: none;
 }}
 

@@ -849,5 +849,79 @@ class TestXLSXExporterValueSanitization:
         assert len(result) == 32767
 
 
+class TestSanitizeSheetName:
+    """Tests for _sanitize_sheet_name ensuring valid Excel sheet titles."""
+
+    def test_plain_name_unchanged(self):
+        assert XLSXExporter._sanitize_sheet_name("Freq_of_CD45") == "Freq_of_CD45"
+
+    def test_colon_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Freq_of_CD45+: Activated")
+        assert ":" not in result
+        assert result == "Freq_of_CD45+_ Activated"
+
+    def test_slash_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Bead_Norm (1000 beads/well)")
+        assert "/" not in result
+        assert result == "Bead_Norm (1000 beads_well)"
+
+    def test_backslash_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Gate\\Sub")
+        assert "\\" not in result
+        assert result == "Gate_Sub"
+
+    def test_question_mark_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Gate?Name")
+        assert "?" not in result
+        assert result == "Gate_Name"
+
+    def test_asterisk_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Gate*Name")
+        assert "*" not in result
+        assert result == "Gate_Name"
+
+    def test_brackets_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("Gate[0]")
+        assert "[" not in result
+        assert "]" not in result
+        assert result == "Gate_0_"
+
+    def test_all_forbidden_chars_replaced(self):
+        result = XLSXExporter._sanitize_sheet_name("a:b\\c/d?e*f[g]")
+        assert result == "a_b_c_d_e_f_g_"
+
+    def test_truncation_to_31_chars(self):
+        long_name = "A" * 50
+        result = XLSXExporter._sanitize_sheet_name(long_name)
+        assert len(result) == 31
+
+    def test_leading_apostrophe_stripped(self):
+        result = XLSXExporter._sanitize_sheet_name("'LeadingQuote")
+        assert not result.startswith("'")
+        assert result == "LeadingQuote"
+
+    def test_whitespace_stripped(self):
+        result = XLSXExporter._sanitize_sheet_name("  Spaced  ")
+        assert result == "Spaced"
+
+    def test_empty_string(self):
+        result = XLSXExporter._sanitize_sheet_name("")
+        assert result == ""
+
+    def test_realistic_gate_with_colon(self):
+        """Simulates the exact crash scenario Colleen reported."""
+        gate_name = "CD45+: Activated"
+        result = XLSXExporter._sanitize_sheet_name(f"Freq_of_{gate_name}")
+        assert len(result) <= 31
+        assert ":" not in result
+        assert result == "Freq_of_CD45+_ Activated"
+
+    def test_realistic_bead_per_well(self):
+        """Catches the latent bug in bead 'per_well' mode."""
+        result = XLSXExporter._sanitize_sheet_name("Bead_Norm (50000 beads/well)")
+        assert "/" not in result
+        assert len(result) <= 31
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

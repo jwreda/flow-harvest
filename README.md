@@ -197,7 +197,18 @@ The application logs errors to `flowkit_debug.log` but continues processing when
 - **Sample Keywords**: View and export custom keywords (Mouse #, Tumor, RT, etc.)
 - **MFI Metrics**: Calculate Mean, Median, and/or Geometric Mean intensities
 - **Marker Selection**: Choose specific markers for MFI or export all
+- **Gate-Marker Matrix**: Visual grid UI for selecting which markers to report per gate
 - **XLSX Export**: Tidy format suitable for R/tidyverse, GraphPad Prism, etc.
+- **Dark Mode / Theme Switching**: Light and dark themes with persistent preference
+- **Performance Presets**: Normal, Low Resource, and Minimal modes for large workspaces
+- **Bead Normalization**: Normalize cell counts by bead gate counts (per N beads or per well)
+- **Scale Factors**: User-defined per-sample scaling for count data
+- **Volume Normalization**: Normalize counts by acquisition volume
+- **Batch Checkbox Toggling**: Select/deselect gates and markers in bulk
+- **Export NaN for Missing Gates**: Missing gate data exports as NaN instead of zeros
+- **Splash Screen**: Theme-aware startup splash with progress indication
+- **Window Geometry Persistence**: Remembers window size and position across sessions
+- **Mac .app Bundle**: PyInstaller-based macOS application packaging
 
 ---
 
@@ -282,27 +293,57 @@ pytest tests/test_mfi_calculations.py -v  # Specific test file
 ```
 flowkit/
 ├── flowkit_gui/
-│   ├── main.py                 # Application entry point
+│   ├── main.py                              # Application entry point, global crash handler
+│   ├── config/
+│   │   └── defaults.py                      # Cache limits, batch size, GC interval defaults
+│   ├── controllers/
+│   │   └── export_controller.py             # Export business logic (validation, config, execution)
 │   ├── models/
-│   │   ├── workspace_model.py  # FlowKit WSP/FCS loading
-│   │   ├── gate_tree_model.py  # Qt tree model with checkboxes
-│   │   ├── keywords_model.py   # Keywords extraction
-│   │   └── statistics_model.py # MFI calculation logic
+│   │   ├── workspace_model.py               # FlowKit WSP/FCS wrapper, sample analysis
+│   │   ├── gate_tree_model.py               # Qt tree model with checkbox support
+│   │   ├── keywords_model.py                # Custom keyword extraction, tidy/wide DataFrames
+│   │   ├── statistics_model.py              # MFI calculation, volume/bead normalization
+│   │   ├── gate_marker_matrix_model.py      # Gate-marker selection matrix data model
+│   │   ├── sample_selection_model.py        # Sample list with events, comp, scale factor columns
+│   │   └── wsp_metadata_parser.py           # WSP XML metadata extraction
 │   ├── views/
-│   │   └── main_window.py      # PyQt5 GUI
+│   │   ├── main_window.py                   # Main PyQt5 window, all UI orchestration
+│   │   ├── gate_tree_view.py                # Gate hierarchy tree view widget
+│   │   ├── gate_marker_matrix_view.py       # Gate-marker matrix grid view
+│   │   ├── colored_gate_tree_delegate.py    # Custom tree delegate with colored gates
+│   │   ├── styled_tree_delegate.py          # Themed tree item delegate
+│   │   ├── export_summary_dialog.py         # Post-export summary dialog
+│   │   └── splash_screen.py                 # Theme-aware startup splash screen
 │   ├── exporters/
-│   │   └── xlsx_exporter.py    # Multi-sheet Excel generation
+│   │   ├── xlsx_exporter.py                 # Multi-sheet Excel export with formatting
+│   │   └── export_config.py                 # ExportConfig dataclass (20 fields)
 │   ├── utils/
-│   │   ├── mfi_calculations.py # Mean, median, geometric mean
-│   │   ├── theme.py            # Theme, icons, QSS loading
-│   │   └── logging_config.py   # Debug logging setup
+│   │   ├── mfi_calculations.py              # Mean, median, geometric mean functions
+│   │   ├── theme.py                         # Theme loading, icon tinting, QSS application
+│   │   ├── theme_manager.py                 # Dark/light theme switching
+│   │   ├── logging_config.py                # Debug logging to flowkit_debug.log
+│   │   ├── settings_manager.py              # Persistent settings (QSettings wrapper)
+│   │   ├── memory_utils.py                  # psutil-based memory checks, export estimation
+│   │   ├── animations.py                    # UI animation helpers
+│   │   ├── cache.py                         # Data caching utilities
+│   │   ├── cancellation.py                  # Cancellation token for long operations
+│   │   ├── colors_dark.py                   # Dark theme color palette
+│   │   ├── colors_light.py                  # Light theme color palette
+│   │   ├── fcs_discovery.py                 # FCS file search and matching
+│   │   ├── timing.py                        # Performance timing utilities
+│   │   └── wait_cursor.py                   # Context manager for busy cursor
 │   └── resources/
-│       ├── icons/              # Custom SVG icons
-│       └── styles/             # flowkit_theme.qss stylesheet
-├── tests/
+│       ├── icons/                           # 23 Lucide SVG icons (stroke="currentColor")
+│       └── styles/
+│           └── base.qss                     # Base QSS stylesheet
+├── tests/                                   # pytest test suite (50+ tests)
+├── scripts/
+│   └── build_mac.sh                         # PyInstaller build + ad-hoc codesign
+├── run_flowjoe.py                           # PyInstaller entry point wrapper
+├── flowkit_gui.spec                         # PyInstaller spec for macOS .app
 ├── pyproject.toml
-├── CLAUDE.md                   # AI assistant instructions
-└── README.md                   # This file
+├── CLAUDE.md                                # AI assistant instructions
+└── README.md                                # This file
 ```
 
 ---

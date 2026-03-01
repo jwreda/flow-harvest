@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import math
 import multiprocessing
 import threading
 import gc
@@ -25,6 +26,7 @@ from ..utils.mfi_calculations import (
 from ..utils.logging_config import get_logger
 from ..utils.cancellation import CancellationToken, CancellationError
 from ..utils.timing import timed_operation
+from ..config import defaults as config_defaults
 
 logger = get_logger("statistics_model")
 
@@ -170,7 +172,8 @@ class StatisticsModel:
 
                 # Periodic garbage collection and progress logging
                 # DataFrames created for each sample/gate combo can accumulate without cleanup
-                if (sample_idx + 1) % 10 == 0:
+                gc_interval = getattr(config_defaults, 'GC_COLLECT_INTERVAL', 5)
+                if (sample_idx + 1) % gc_interval == 0:
                     gc.collect()
                     logger.info(f"  Processed {sample_idx + 1}/{len(samples)} samples")
 
@@ -693,9 +696,9 @@ class StatisticsModel:
                     gate_path = gate_paths.get(gate_id, gate_id)
                     logger.warning(f"Failed to get stats for {sample_id}/{gate_id}: {e}")
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.COUNTS):
-                        row[f"{gate_path}_count"] = 0
+                        row[f"{gate_path}_count"] = float('nan')
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.PERCENT):
-                        row[f"{gate_path}_%parent"] = 0.0
+                        row[f"{gate_path}_%parent"] = float('nan')
 
             rows.append(row)
 
@@ -762,9 +765,9 @@ class StatisticsModel:
                         'gate_name': gate_id,
                     }
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.COUNTS):
-                        row['count'] = 0
+                        row['count'] = float('nan')
                     if data_type in (FrequencyDataType.BOTH, FrequencyDataType.PERCENT):
-                        row['%parent'] = 0.0
+                        row['%parent'] = float('nan')
                     row.update(keywords)
                     rows.append(row)
 
@@ -847,7 +850,7 @@ class StatisticsModel:
                     ref_count, _, _ = self._resolve_gate_stats(sample_id, ref_gate_id)
                 except Exception as e:
                     logger.warning(f"Failed to get reference stats for {sample_id}/{ref_gate_id}: {e}")
-                    ref_count = 0
+                    ref_count = float('nan')
 
                 row[f"ref_count"] = ref_count
 
@@ -864,13 +867,17 @@ class StatisticsModel:
                         desc_count, _, _ = self._resolve_gate_stats(sample_id, desc_gate_id)
                     except Exception as e:
                         logger.warning(f"Failed to get descendant stats for {sample_id}/{desc_gate_id}: {e}")
-                        desc_count = 0
+                        desc_count = float('nan')
 
                     # Calculate normalized percentage
-                    if ref_count > 0:
+                    if isinstance(ref_count, float) and math.isnan(ref_count):
+                        pct_of_ref = float('nan')
+                    elif isinstance(desc_count, float) and math.isnan(desc_count):
+                        pct_of_ref = float('nan')
+                    elif ref_count > 0:
                         pct_of_ref = (desc_count / ref_count) * 100.0
                     else:
-                        pct_of_ref = 0.0
+                        pct_of_ref = float('nan')
 
                     # Add columns for this descendant
                     row[f"{relative_path}_count"] = desc_count
@@ -961,7 +968,7 @@ class StatisticsModel:
                     ref_count, _, _ = self._resolve_gate_stats(sample_id, ref_gate_id)
                 except Exception as e:
                     logger.warning(f"Failed to get reference stats for {sample_id}/{ref_gate_id}: {e}")
-                    ref_count = 0
+                    ref_count = float('nan')
 
                 # Process each descendant
                 for descendant in descendants:
@@ -978,13 +985,17 @@ class StatisticsModel:
                         desc_count, _, _ = self._resolve_gate_stats(sample_id, desc_gate_id)
                     except Exception as e:
                         logger.warning(f"Failed to get descendant stats for {sample_id}/{desc_gate_id}: {e}")
-                        desc_count = 0
+                        desc_count = float('nan')
 
                     # Calculate normalized percentage
-                    if ref_count > 0:
+                    if isinstance(ref_count, float) and math.isnan(ref_count):
+                        pct_of_ref = float('nan')
+                    elif isinstance(desc_count, float) and math.isnan(desc_count):
+                        pct_of_ref = float('nan')
+                    elif ref_count > 0:
                         pct_of_ref = (desc_count / ref_count) * 100.0
                     else:
-                        pct_of_ref = 0.0
+                        pct_of_ref = float('nan')
 
                     # Build the row
                     row = {
@@ -1121,11 +1132,11 @@ class StatisticsModel:
                         normalized = (raw_count / vol) * denominator
                         row[f"{gate_id}_count"] = normalized
                     else:
-                        row[f"{gate_id}_count"] = 0.0
+                        row[f"{gate_id}_count"] = float('nan')
             else:
-                # Sample has no statistics, fill with zeros
+                # Sample has no statistics, fill with NaN
                 for gate_id in gate_ids:
-                    row[f"{gate_id}_count"] = 0.0
+                    row[f"{gate_id}_count"] = float('nan')
 
             rows.append(row)
 
@@ -1286,10 +1297,11 @@ class StatisticsModel:
                         normalized = (raw_count / bead_count) * user_number
                         row[f"{gate_id}_bead_norm"] = normalized
                     else:
-                        row[f"{gate_id}_bead_norm"] = 0.0
+                        row[f"{gate_id}_bead_norm"] = float('nan')
             else:
+                # Sample has no statistics, fill with NaN
                 for gate_id in gate_ids:
-                    row[f"{gate_id}_bead_norm"] = 0.0
+                    row[f"{gate_id}_bead_norm"] = float('nan')
 
             rows.append(row)
 

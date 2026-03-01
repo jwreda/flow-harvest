@@ -35,6 +35,7 @@ htmlcov/
 # Temporary Excel files
 ~$*.xlsx
 
-# Local exports (keep structure, ignore generated files)
-flowkit_export.xlsx
+# Export artifacts
+flowkit_export*.xlsx
+flowkit_debug.log
 *.fcs

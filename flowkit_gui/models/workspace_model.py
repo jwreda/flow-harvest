@@ -36,6 +36,7 @@ from ..config import (
     SYSTEM_KEYWORD_SUFFIXES,
     CACHE_MEMORY_LIMIT_MB,
 )
+from ..config import defaults as config_defaults
 
 logger = get_logger("workspace_model")
 
@@ -1267,8 +1268,8 @@ class WorkspaceModel:
         all_samples = len(sample_ids) == len(self._samples)
 
         # Process samples in batches to limit peak memory usage
-        # Batch size of 10 keeps memory footprint manageable for large datasets
-        batch_size = 10
+        # Batch size is configurable via performance presets (default 10)
+        batch_size = getattr(config_defaults, 'BATCH_SIZE', 10)
         logger.info(f"Analyzing {total} samples in batches of {batch_size}...")
 
         for batch_start in range(0, total, batch_size):
@@ -1322,9 +1323,11 @@ class WorkspaceModel:
                         self._failed_samples[sample_id] = f"{type(e).__name__}: {str(e)}"
                     continue
 
-            # Force garbage collection between batches to release memory
-            gc.collect()
-            logger.debug(f"Garbage collection after batch {batch_num}")
+            # Periodic garbage collection between batches (respects GC interval setting)
+            gc_interval = getattr(config_defaults, 'GC_COLLECT_INTERVAL', 5)
+            if batch_num % gc_interval == 0:
+                gc.collect()
+                logger.debug(f"Garbage collection after batch {batch_num}")
 
         logger.info(f"Successfully analyzed {len(self._analyzed_samples)} samples")
 
@@ -1376,11 +1379,15 @@ class WorkspaceModel:
             logger.info("All samples already analyzed")
             return {sid: True for sid in sample_ids}
 
-        # Determine worker count — scale dynamically based on CPU and sample count
+        # Determine worker count — use config if set, otherwise scale dynamically
         if max_workers is None:
-            cpu_workers = min(4, multiprocessing.cpu_count())
-            sample_workers = max(1, len(samples_to_analyze) // 3)
-            max_workers = min(cpu_workers, sample_workers)
+            max_workers_config = getattr(config_defaults, 'MAX_PARALLEL_WORKERS', None)
+            if max_workers_config and max_workers_config > 0:
+                max_workers = max_workers_config
+            else:
+                cpu_workers = min(4, multiprocessing.cpu_count())
+                sample_workers = max(1, len(samples_to_analyze) // 3)
+                max_workers = min(cpu_workers, sample_workers)
 
         total = len(samples_to_analyze)
         completed = 0

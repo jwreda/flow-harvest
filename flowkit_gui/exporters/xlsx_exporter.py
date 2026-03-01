@@ -9,6 +9,7 @@ This module provides:
 - Warnings sheet for calculation errors
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Callable, Dict, Any
@@ -476,7 +477,7 @@ class XLSXExporter:
 
         # Sheet: Volume-normalized counts (if enabled)
         if self._volume_normalize and normalized_counts_df is not None:
-            sheet_name = self._get_volume_sheet_name(include_all=False)
+            sheet_name = self._sanitize_sheet_name(self._get_volume_sheet_name(include_all=False))
             if status_callback:
                 status_callback(f"Writing {sheet_name} sheet...")
             ws_vol_norm = wb.create_sheet(sheet_name)
@@ -488,7 +489,7 @@ class XLSXExporter:
 
             # Also create _All version if include_all_sheets is enabled
             if self._include_all_sheets:
-                sheet_name_all = self._get_volume_sheet_name(include_all=True)
+                sheet_name_all = self._sanitize_sheet_name(self._get_volume_sheet_name(include_all=True))
                 if status_callback:
                     status_callback(f"Writing {sheet_name_all} sheet...")
                 ws_vol_norm_all = wb.create_sheet(sheet_name_all)
@@ -500,8 +501,8 @@ class XLSXExporter:
 
         # Sheet: Bead-normalized counts (if enabled)
         if self._bead_normalize and bead_normalized_df is not None:
-            bead_sheet_name = stats_model.get_bead_sheet_name(
-                self._bead_user_number, self._bead_mode
+            bead_sheet_name = self._sanitize_sheet_name(
+                stats_model.get_bead_sheet_name(self._bead_user_number, self._bead_mode)
             )
             if status_callback:
                 status_callback(f"Writing {bead_sheet_name} sheet...")
@@ -1213,10 +1214,7 @@ class XLSXExporter:
         """
         # Create sheet name from gate name (last path component)
         gate_name = ref_gate_id.split('/')[-1]
-        base_sheet_name = f"Freq_of_{gate_name}"
-
-        # Truncate to 31 chars (Excel limit) and handle duplicates
-        base_sheet_name = base_sheet_name[:31]
+        base_sheet_name = self._sanitize_sheet_name(f"Freq_of_{gate_name}")
 
         # Handle sheet name collisions
         sheet_name = base_sheet_name
@@ -1373,6 +1371,27 @@ class XLSXExporter:
         if isinstance(val, str) and len(val) > 32767:
             return val[:32767]
         return val
+
+    @staticmethod
+    def _sanitize_sheet_name(name: str) -> str:
+        """
+        Sanitize a string for use as an Excel sheet name.
+
+        Excel forbids these characters in sheet names: : \\ / ? * [ ]
+        Sheet names also cannot start or end with an apostrophe.
+        Maximum length is 31 characters.
+        """
+        # Replace Excel-forbidden characters with underscore
+        name = re.sub(r'[:\\/?\*\[\]]', '_', name)
+        # Strip leading/trailing apostrophes (Excel rejects these)
+        name = name.strip("'")
+        # Strip leading/trailing whitespace
+        name = name.strip()
+        # Truncate to 31 characters (Excel limit)
+        name = name[:31]
+        # Final strip in case truncation left trailing whitespace
+        name = name.strip()
+        return name
 
     def _write_dataframe_rows(
         self,

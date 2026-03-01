@@ -49,3 +49,12 @@ class ExportConfig:
 
     # Scale factors
     scale_factors: Optional[Dict[str, float]] = None
+
+    def __post_init__(self):
+        """Validate field combinations."""
+        if self.bead_normalize and not self.bead_gate_id:
+            raise ValueError("bead_normalize=True requires bead_gate_id to be set")
+        if self.volume_normalize and self.volume_denominator <= 0:
+            raise ValueError("volume_denominator must be positive when volume_normalize is True")
+        if self.bead_normalize and self.bead_user_number <= 0:
+            raise ValueError("bead_user_number must be positive when bead_normalize is True")

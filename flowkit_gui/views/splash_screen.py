@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QApplication, QPushBut
 from PyQt5.QtCore import Qt, QEventLoop, pyqtSignal
 from PyQt5.QtGui import QFont
 
+from ..utils.theme import get_colors
+
 
 def get_version_info() -> dict:
     """
@@ -77,8 +79,40 @@ class SplashScreen(QWidget):
         super().__init__(parent)
         self._setup_ui()
 
+    def _get_theme_colors(self) -> dict:
+        """
+        Get theme-aware colors for the splash screen.
+
+        Returns a dictionary of color values based on the current light/dark theme.
+        Brand colors (pink accents) are kept constant across themes; only surface,
+        text, and border colors adapt.
+
+        Returns:
+            Dict with keys: text_primary, text_secondary, text_muted, background,
+                            border, btn_bg, btn_text, btn_hover, btn_pressed.
+        """
+        palette = get_colors()  # auto-detects current theme
+
+        return {
+            # Adaptive colors - differ between light and dark
+            "text_primary": palette["text_primary"],
+            "text_secondary": palette["text_secondary"],
+            "text_muted": palette["text_disabled"],
+            "background": palette["background"],
+            "border": palette["border"],
+            # Brand/constant colors - work on both themes
+            "brand_pink": "#FF69B4",
+            "btn_bg": "#FF69B4",
+            "btn_text": "white",
+            "btn_hover": "#FF1493",
+            "btn_pressed": "#DB1493",
+        }
+
     def _setup_ui(self):
         """Set up the splash screen UI."""
+        # Resolve theme-aware colors at build time
+        c = self._get_theme_colors()
+
         # Window configuration
         self.setObjectName("splashScreen")
         self.setWindowFlags(
@@ -94,8 +128,11 @@ class SplashScreen(QWidget):
         layout.setContentsMargins(32, 28, 32, 24)
         layout.setSpacing(0)
 
-        # App title - "Flow" in neutral, "Joe" in pink
-        title_label = QLabel('<span style="color: #333333;">Flow</span><span style="color: #FF69B4;">Joe</span>')
+        # App title - "Flow" in theme text color, "Joe" in brand pink
+        title_label = QLabel(
+            f'<span style="color: {c["text_primary"]};">Flow</span>'
+            f'<span style="color: {c["brand_pink"]};">Joe</span>'
+        )
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(28)
@@ -110,7 +147,7 @@ class SplashScreen(QWidget):
         tagline_font = QFont()
         tagline_font.setPointSize(11)
         tagline_label.setFont(tagline_font)
-        tagline_label.setStyleSheet("color: #666666; margin-bottom: 20px;")
+        tagline_label.setStyleSheet(f"color: {c['text_secondary']}; margin-bottom: 20px;")
         layout.addWidget(tagline_label)
 
         # Workflow section header
@@ -120,7 +157,9 @@ class SplashScreen(QWidget):
         workflow_header_font.setPointSize(13)
         workflow_header_font.setWeight(QFont.DemiBold)
         workflow_header.setFont(workflow_header_font)
-        workflow_header.setStyleSheet("color: #333333; margin-top: 8px; margin-bottom: 12px;")
+        workflow_header.setStyleSheet(
+            f"color: {c['text_primary']}; margin-top: 8px; margin-bottom: 12px;"
+        )
         layout.addWidget(workflow_header)
 
         # Workflow steps
@@ -136,12 +175,14 @@ class SplashScreen(QWidget):
             step_layout.setContentsMargins(0, 0, 0, 8)
             step_layout.setSpacing(0)
 
-            step_label = QLabel(f'<span style="color: #FF69B4; font-weight: 600;">{number}</span> {text}')
+            step_label = QLabel(
+                f'<span style="color: {c["brand_pink"]}; font-weight: 600;">{number}</span> {text}'
+            )
             step_label.setAlignment(Qt.AlignLeft)
             step_font = QFont()
             step_font.setPointSize(11)
             step_label.setFont(step_font)
-            step_label.setStyleSheet("color: #333333;")
+            step_label.setStyleSheet(f"color: {c['text_primary']};")
             step_label.setWordWrap(True)
 
             layout.addWidget(step_label)
@@ -160,13 +201,13 @@ class SplashScreen(QWidget):
         version_font = QFont()
         version_font.setPointSize(9)
         version_label.setFont(version_font)
-        version_label.setStyleSheet("color: #999999; margin-top: 12px;")
+        version_label.setStyleSheet(f"color: {c['text_muted']}; margin-top: 12px;")
         layout.addWidget(version_label)
 
         version_label_2 = QLabel(version_text_2)
         version_label_2.setAlignment(Qt.AlignCenter)
         version_label_2.setFont(version_font)
-        version_label_2.setStyleSheet("color: #999999; margin-top: 2px;")
+        version_label_2.setStyleSheet(f"color: {c['text_muted']}; margin-top: 2px;")
         layout.addWidget(version_label_2)
 
         # Get Started button
@@ -183,32 +224,32 @@ class SplashScreen(QWidget):
         hint_font.setPointSize(9)
         hint_font.setItalic(True)
         hint_label.setFont(hint_font)
-        hint_label.setStyleSheet("color: #AAAAAA; margin-top: 8px;")
+        hint_label.setStyleSheet(f"color: {c['text_muted']}; margin-top: 8px;")
         layout.addWidget(hint_label)
 
-        # Apply card styling
-        self.setStyleSheet("""
-            #splashScreen {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E0E0;
+        # Apply card styling with theme-aware surface and border colors
+        self.setStyleSheet(f"""
+            #splashScreen {{
+                background-color: {c['background']};
+                border: 1px solid {c['border']};
                 border-radius: 12px;
-            }
-            #getStartedButton {
-                background-color: #FF69B4;
-                color: white;
+            }}
+            #getStartedButton {{
+                background-color: {c['btn_bg']};
+                color: {c['btn_text']};
                 border: none;
                 border-radius: 8px;
                 padding: 12px 24px;
                 font-weight: 600;
                 font-size: 13px;
                 margin-top: 16px;
-            }
-            #getStartedButton:hover {
-                background-color: #FF1493;
-            }
-            #getStartedButton:pressed {
-                background-color: #DB1493;
-            }
+            }}
+            #getStartedButton:hover {{
+                background-color: {c['btn_hover']};
+            }}
+            #getStartedButton:pressed {{
+                background-color: {c['btn_pressed']};
+            }}
         """)
 
     def mousePressEvent(self, event):

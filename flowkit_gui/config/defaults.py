@@ -70,6 +70,9 @@ CACHE_MEMORY_LIMIT_MB = 4096  # 4GB default
 # Garbage collection interval (number of samples between gc.collect() calls)
 GC_COLLECT_INTERVAL = 5
 
+# Batch size for sequential sample analysis
+BATCH_SIZE = 10
+
 # Maximum workers for parallel sample analysis
 # None = auto-detect (min of 4 and CPU count)
 MAX_PARALLEL_WORKERS = None
