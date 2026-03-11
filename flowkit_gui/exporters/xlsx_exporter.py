@@ -18,6 +18,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -402,6 +403,11 @@ class XLSXExporter:
                 self._warnings.extend(calc_warnings)
                 logger.debug(f"Collected {len(calc_warnings)} warnings from statistics calculation")
 
+        # Build channel display name mapping (e.g., "BUV496-A" -> "CD4 [BUV496-A]")
+        self._channel_display_names = {}
+        for ci in self._workspace.channel_info:
+            self._channel_display_names[ci.pnn_label] = ci.display_name
+
         # Check for cancellation after statistics calculation
         if cancellation_token:
             cancellation_token.check_cancelled()
@@ -701,7 +707,8 @@ class XLSXExporter:
                 reference_gate_ids=self._reference_gate_ids,
                 sample_ids=self._selected_sample_ids,
                 max_depth=self._descendant_depth,
-                include_keywords=True
+                include_keywords=True,
+                selected_keywords=self._selected_keywords
             )
 
             # Track existing sheet names for collision handling (case-insensitive)
@@ -724,7 +731,8 @@ class XLSXExporter:
                 reference_gate_ids=self._reference_gate_ids,
                 sample_ids=self._selected_sample_ids,
                 max_depth=self._descendant_depth,
-                include_keywords=True
+                include_keywords=True,
+                selected_keywords=self._selected_keywords
             )
 
             if not normalized_tidy.empty:
@@ -914,7 +922,9 @@ class XLSXExporter:
             self._mfi_metrics,
             include_keywords=True,
             include_gate_stats=include_gate_stats,
-            scale_factors=self._scale_factors
+            scale_factors=self._scale_factors,
+            selected_keywords=self._selected_keywords,
+            channel_display_names=self._channel_display_names
         )
 
         if df.empty:
@@ -984,7 +994,9 @@ class XLSXExporter:
             include_keywords=True,
             include_gate_stats=include_gate_stats,
             all_gate_ids=self._gate_ids if include_gate_stats else None,
-            scale_factors=self._scale_factors
+            scale_factors=self._scale_factors,
+            selected_keywords=self._selected_keywords,
+            channel_display_names=self._channel_display_names
         )
 
         if df.empty:
@@ -1037,7 +1049,7 @@ class XLSXExporter:
         logger.debug(f"Writing frequencies wide sheet: {description}")
 
         # Get frequency DataFrame (wide format)
-        df = stats_model.calculate_frequencies(gate_ids, wide=True, include_keywords=True, data_type=data_type)
+        df = stats_model.calculate_frequencies(gate_ids, wide=True, include_keywords=True, data_type=data_type, selected_keywords=self._selected_keywords)
 
         if df.empty:
             ws.append([f"No data available for {description}"])
@@ -1084,7 +1096,7 @@ class XLSXExporter:
         logger.debug(f"Writing frequencies tidy sheet: {description}")
 
         # Get frequency DataFrame (tidy format)
-        df = stats_model.calculate_frequencies(gate_ids, wide=False, include_keywords=True, data_type=data_type)
+        df = stats_model.calculate_frequencies(gate_ids, wide=False, include_keywords=True, data_type=data_type, selected_keywords=self._selected_keywords)
 
         if df.empty:
             ws.append([f"No data available for {description}"])
@@ -1368,8 +1380,11 @@ class XLSXExporter:
             return int(val)
         if isinstance(val, np.floating):
             return float(val)
-        if isinstance(val, str) and len(val) > 32767:
-            return val[:32767]
+        if isinstance(val, str):
+            # Strip illegal XML characters that corrupt xlsx files
+            val = ILLEGAL_CHARACTERS_RE.sub('', val)
+            if len(val) > 32767:
+                return val[:32767]
         return val
 
     @staticmethod
@@ -1381,6 +1396,8 @@ class XLSXExporter:
         Sheet names also cannot start or end with an apostrophe.
         Maximum length is 31 characters.
         """
+        # Strip illegal XML characters that corrupt xlsx files
+        name = ILLEGAL_CHARACTERS_RE.sub('', name)
         # Replace Excel-forbidden characters with underscore
         name = re.sub(r'[:\\/?\*\[\]]', '_', name)
         # Strip leading/trailing apostrophes (Excel rejects these)

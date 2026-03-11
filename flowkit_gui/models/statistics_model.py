@@ -433,7 +433,9 @@ class StatisticsModel:
         metrics: List[MFIMetric],
         include_keywords: bool = True,
         include_gate_stats: bool = True,
-        scale_factors: Optional[Dict[str, float]] = None
+        scale_factors: Optional[Dict[str, float]] = None,
+        selected_keywords: Optional[List[str]] = None,
+        channel_display_names: Optional[Dict[str, str]] = None
     ) -> pd.DataFrame:
         """
         Generate statistics DataFrame in wide format.
@@ -470,7 +472,10 @@ class StatisticsModel:
             # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name in sorted(custom.keys()):
+                keys = sorted(custom.keys())
+                if selected_keywords is not None:
+                    keys = [k for k in keys if k in selected_keywords]
+                for kw_name in keys:
                     row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add gate statistics
@@ -494,7 +499,8 @@ class StatisticsModel:
                             for metric in metrics:
                                 metric_key = metric.value
                                 if metric_key in stats.mfi_values[channel]:
-                                    col_name = f"{gate_id}_{metric_key}_{channel}"
+                                    display = channel_display_names.get(channel, channel) if channel_display_names else channel
+                                    col_name = f"{gate_id}_{metric_key}_{display}"
                                     row[col_name] = stats.mfi_values[channel][metric_key]
 
             rows.append(row)
@@ -508,7 +514,9 @@ class StatisticsModel:
         include_keywords: bool = True,
         include_gate_stats: bool = True,
         all_gate_ids: Optional[List[str]] = None,
-        scale_factors: Optional[Dict[str, float]] = None
+        scale_factors: Optional[Dict[str, float]] = None,
+        selected_keywords: Optional[List[str]] = None,
+        channel_display_names: Optional[Dict[str, str]] = None
     ) -> pd.DataFrame:
         """
         Generate statistics DataFrame with sparse MFI columns.
@@ -559,7 +567,10 @@ class StatisticsModel:
             # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name in sorted(custom.keys()):
+                keys = sorted(custom.keys())
+                if selected_keywords is not None:
+                    keys = [k for k in keys if k in selected_keywords]
+                for kw_name in keys:
                     row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add gate statistics (count, %parent) if enabled
@@ -585,7 +596,8 @@ class StatisticsModel:
                         for metric in metrics:
                             metric_key = metric.value
                             if metric_key in stats.mfi_values[channel]:
-                                col_name = f"{gate_id}_{metric_key}_{channel}"
+                                display = channel_display_names.get(channel, channel) if channel_display_names else channel
+                                col_name = f"{gate_id}_{metric_key}_{display}"
                                 row[col_name] = stats.mfi_values[channel][metric_key]
 
             rows.append(row)
@@ -628,7 +640,8 @@ class StatisticsModel:
         gate_ids: List[str],
         wide: bool = True,
         include_keywords: bool = True,
-        data_type: FrequencyDataType = FrequencyDataType.BOTH
+        data_type: FrequencyDataType = FrequencyDataType.BOTH,
+        selected_keywords: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """
         Calculate frequency (count and/or %parent) data for gates.
@@ -639,6 +652,7 @@ class StatisticsModel:
                   If False, return tidy format (one row per gate per sample).
             include_keywords: Whether to include sample keywords in output
             data_type: What data to include - BOTH, COUNTS only, or PERCENT only
+            selected_keywords: Optional list of keyword names to include (None = all)
 
         Returns:
             DataFrame with frequency data in requested format
@@ -647,15 +661,16 @@ class StatisticsModel:
         logger.info(f"Calculating frequencies for {len(samples)} samples, {len(gate_ids)} gates, wide={wide}, data_type={data_type.value}")
 
         if wide:
-            return self._calculate_frequencies_wide(gate_ids, include_keywords, data_type)
+            return self._calculate_frequencies_wide(gate_ids, include_keywords, data_type, selected_keywords)
         else:
-            return self._calculate_frequencies_tidy(gate_ids, include_keywords, data_type)
+            return self._calculate_frequencies_tidy(gate_ids, include_keywords, data_type, selected_keywords)
 
     def _calculate_frequencies_wide(
         self,
         gate_ids: List[str],
         include_keywords: bool,
-        data_type: FrequencyDataType = FrequencyDataType.BOTH
+        data_type: FrequencyDataType = FrequencyDataType.BOTH,
+        selected_keywords: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """Generate wide format frequency DataFrame (one row per sample)."""
         rows = []
@@ -678,7 +693,10 @@ class StatisticsModel:
             # Add keywords if requested (sorted alphabetically for consistent column order)
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name in sorted(custom.keys()):
+                keys = sorted(custom.keys())
+                if selected_keywords is not None:
+                    keys = [k for k in keys if k in selected_keywords]
+                for kw_name in keys:
                     row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add frequency data for each gate
@@ -708,7 +726,8 @@ class StatisticsModel:
         self,
         gate_ids: List[str],
         include_keywords: bool,
-        data_type: FrequencyDataType = FrequencyDataType.BOTH
+        data_type: FrequencyDataType = FrequencyDataType.BOTH,
+        selected_keywords: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """Generate tidy format frequency DataFrame (one row per gate per sample)."""
         rows = []
@@ -729,7 +748,10 @@ class StatisticsModel:
             keywords = {}
             if include_keywords:
                 custom = sample.get_custom_keywords()
-                for kw_name in sorted(custom.keys()):
+                keys = sorted(custom.keys())
+                if selected_keywords is not None:
+                    keys = [k for k in keys if k in selected_keywords]
+                for kw_name in keys:
                     keywords[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
             # Add a row for each gate
@@ -778,7 +800,8 @@ class StatisticsModel:
         reference_gate_ids: List[str],
         sample_ids: Optional[List[str]] = None,
         max_depth: int = 0,
-        include_keywords: bool = True
+        include_keywords: bool = True,
+        selected_keywords: Optional[List[str]] = None
     ) -> Dict[str, pd.DataFrame]:
         """
         Calculate frequencies of descendants as % of reference gates (wide format).
@@ -842,7 +865,10 @@ class StatisticsModel:
                 # Add keywords if requested (sorted alphabetically for consistent column order)
                 if include_keywords:
                     custom = sample.get_custom_keywords()
-                    for kw_name in sorted(custom.keys()):
+                    keys = sorted(custom.keys())
+                    if selected_keywords is not None:
+                        keys = [k for k in keys if k in selected_keywords]
+                    for kw_name in keys:
                         row[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
                 # Get reference gate count
@@ -895,7 +921,8 @@ class StatisticsModel:
         reference_gate_ids: List[str],
         sample_ids: Optional[List[str]] = None,
         max_depth: int = 0,
-        include_keywords: bool = True
+        include_keywords: bool = True,
+        selected_keywords: Optional[List[str]] = None
     ) -> pd.DataFrame:
         """
         Calculate normalized frequencies in tidy format (one row per sample/gate/reference).
@@ -960,7 +987,10 @@ class StatisticsModel:
                 keywords = {}
                 if include_keywords:
                     custom = sample.get_custom_keywords()
-                    for kw_name in sorted(custom.keys()):
+                    keys = sorted(custom.keys())
+                    if selected_keywords is not None:
+                        keys = [k for k in keys if k in selected_keywords]
+                    for kw_name in keys:
                         keywords[kw_name] = str(custom[kw_name]) if custom[kw_name] else ''
 
                 # Get reference gate count

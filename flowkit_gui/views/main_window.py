@@ -2527,8 +2527,11 @@ class MainWindow(QMainWindow):
             return
 
         # 5. File dialog
+        default_name = "flowkit_export.xlsx"
+        if self._workspace_model and self._workspace_model.wsp_path:
+            default_name = f"{self._workspace_model.wsp_path.stem}_flowkit_export.xlsx"
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export to Excel", "flowkit_export.xlsx", "Excel Files (*.xlsx)"
+            self, "Export to Excel", default_name, "Excel Files (*.xlsx)"
         )
         if not file_path:
             return

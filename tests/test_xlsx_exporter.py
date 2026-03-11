@@ -40,6 +40,10 @@ class MockWorkspaceModel:
     def channels(self):
         return self._channels
 
+    @property
+    def channel_info(self):
+        return []
+
     def set_samples(self, samples):
         self._samples = samples
 
