@@ -39,3 +39,10 @@ htmlcov/
 flowkit_export*.xlsx
 flowkit_debug.log
 *.fcs
+
+# Lab data never belongs in this repo
+*.wsp
+*.xlsx
+*.xls
+*.log
+error to process*

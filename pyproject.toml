@@ -3,10 +3,11 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flowkit-gui"
+name = "flow-harvest"
 version = "0.1.0"
 description = "GUI tool for flow cytometry data analysis using FlowJo workspace files"
 readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.9"
 dependencies = [
     "FlowKit>=1.0.0",
