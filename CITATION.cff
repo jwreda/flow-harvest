@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use Flow Harvest in your research, please cite it as below."
+title: "Flow Harvest"
+abstract: "Export frequencies and MFIs from FlowJo workspaces into tidy tables, fast and without crashes."
+type: software
+authors:
+  - family-names: Reda
+    given-names: Joseph
+    orcid: "https://orcid.org/0000-0002-9413-5111"
+  - family-names: Foley
+    given-names: Colleen
+    affiliation: "Pritzker School of Molecular Engineering, University of Chicago"
+    orcid: "https://orcid.org/0009-0002-1636-7205"
+repository-code: "https://github.com/jwreda/flow-harvest"
+license: GPL-3.0-or-later
+keywords:
+  - flow cytometry
+  - spectral flow cytometry
+  - FlowJo workspace
+  - FlowKit
+  - tidy data
