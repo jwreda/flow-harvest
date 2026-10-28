@@ -38,7 +38,7 @@ Before the scripted comparison, we also spot-checked by hand: exporting measurem
 
 Digging this deep also revealed intricacies and assumptions in FlowJo itself, such as computing statistics in its display space.
 
-262 automated tests: 253 pass, and 9 are skipped until example data is public.
+267 automated tests: 258 pass, and 9 are skipped until example data is public.
 
 ## How it was built
 
