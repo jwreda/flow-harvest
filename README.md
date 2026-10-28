@@ -4,8 +4,6 @@ Export frequencies and MFIs from FlowJo workspaces into tidy tables, fast and wi
 
 Flow Harvest opens a FlowJo workspace (.wsp) and its .fcs files and exports the frequencies and MFIs you choose as one tidy table, ready for R, Python, Prism or AI-assisted analysis. You keep gating where you already do it. Flow Harvest handles getting the numbers out.
 
-<!-- demo video or GIF goes here -->
-
 > **Status:** in active use for thesis research; first public release. Validated against FlowJo on a 19-sample spectral experiment (see below).
 
 ---
@@ -33,12 +31,14 @@ The part I'm proudest of is the ergonomics: relative frequencies and MFIs are no
 We compared every frequency and MFI from one spectral experiment (19 samples) exported by FlowJo and by Flow Harvest from the same workspace and files.
 
 - **253 measurements** compared: 215 population frequencies and 38 mean or median MFIs
-- **234 of 253** agree at r ≥ 0.99, and 191 at r ≥ 0.999
+- **234 of 253** track FlowJo at r ≥ 0.99 (Pearson correlation across the 19 samples), and 191 at r ≥ 0.999. Full breakdown in [docs/VALIDATION.md](docs/VALIDATION.md).
 - **2 real disagreements**, both in one rare population (as few as 26 events in a sample). They come from small gate sizes plus negative values after spectral unmixing: FlowJo computes statistics in its display space, while Flow Harvest computes on the raw values. In response, Flow Harvest now warns when a gate has fewer than 10 events and explains when a geometric MFI can't be computed.
 
 Before the scripted comparison, we also spot-checked by hand: exporting measurements from both tools, graphing them by group, and confirming that the rank order of mice was consistent for a given parameter.
 
-The codebase has 262 automated tests.
+Digging this deep also revealed intricacies and assumptions in FlowJo itself, such as computing statistics in its display space.
+
+262 automated tests: 253 pass, and 9 are skipped until example data is public.
 
 ## How it was built
 
@@ -50,7 +50,7 @@ We knew from the start which functions the software had to perform, so most of t
 - **Compensation matrices.** At first the app failed to find compensation matrices. Then it found them but didn't apply them, or showed them in a way that didn't match FlowJo. We ended up pulling cues from the FlowJo file itself, including the icon color assigned to each matrix, so users can see at a glance that they picked the right matrix and that the app found what was actually stored. Those cases are covered by tests.
 - **Remote debugging and speed.** The app crashed on Colleen's computer, and we're not in the same place. We built out logging so she could send me error logs as she worked, which sped up development a lot. Early versions also took multiple minutes per sample. With 30-mouse experiments, that meant an hour just to export, which defeats the purpose, so we made it faster. Colleen now routinely exports experiments of 10 to 20 samples, and even her largest, 60 samples with large files, takes about 20 minutes at most.
 
-Tools: Claude Code, mostly with Claude Opus 4.5 and Opus 4.6 (January to March 2026). All design decisions, testing and validation were done by people, and every change was reviewed by me before Colleen used it.
+Tools: Claude Code, mostly with Claude Opus 4.5 and Opus 4.6 (January to March 2026, with fixes since). We collaborated with Claude. We were firm on what the design had to accomplish and asked it to follow best practices. We developed the tests together: we set what needed to work properly, and Claude did the plumbing. The tests were not enough on their own. They would often pass while the actual use failed, likely because our files were larger, messier and had more surprising properties than the test data, and we often saw crashes from runaway processes that the tests did not catch. So we tested every build thoroughly on real data, even when Claude was confident it would work, and every change was reviewed by me before Colleen used it.
 
 ## Install and run
 
