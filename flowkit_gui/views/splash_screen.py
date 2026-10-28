@@ -1,5 +1,5 @@
 """
-Splash screen for FlowJoe.
+Splash screen for Flow Harvest.
 
 Shows application branding, version information, and workflow guidance
 at startup before the main window appears.
@@ -21,7 +21,7 @@ def get_version_info() -> dict:
         Dictionary with version strings for each component.
     """
     versions = {
-        "FlowJoe": "0.1.0",
+        "Flow Harvest": "0.1.0",
         "FlowKit": "unknown",
         "PyQt5": "unknown",
         "Python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",

@@ -339,7 +339,7 @@ flowkit/
 ├── tests/                                   # pytest test suite (50+ tests)
 ├── scripts/
 │   └── build_mac.sh                         # PyInstaller build + ad-hoc codesign
-├── run_flowjoe.py                           # PyInstaller entry point wrapper
+├── run_flow_harvest.py                      # PyInstaller entry point wrapper
 ├── flowkit_gui.spec                         # PyInstaller spec for macOS .app
 ├── pyproject.toml
 ├── CLAUDE.md                                # AI assistant instructions
