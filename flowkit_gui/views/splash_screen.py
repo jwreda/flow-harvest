@@ -128,10 +128,10 @@ class SplashScreen(QWidget):
         layout.setContentsMargins(32, 28, 32, 24)
         layout.setSpacing(0)
 
-        # App title - "Flow" in theme text color, "Joe" in brand pink
+        # App title - "Flow" in theme text color, "Harvest" in brand pink
         title_label = QLabel(
-            f'<span style="color: {c["text_primary"]};">Flow</span>'
-            f'<span style="color: {c["brand_pink"]};">Joe</span>'
+            f'<span style="color: {c["text_primary"]};">Flow </span>'
+            f'<span style="color: {c["brand_pink"]};">Harvest</span>'
         )
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
@@ -142,7 +142,7 @@ class SplashScreen(QWidget):
         layout.addWidget(title_label)
 
         # Tagline
-        tagline_label = QLabel("Your daily dose of flow")
+        tagline_label = QLabel("Export frequencies and MFIs from FlowJo workspaces")
         tagline_label.setAlignment(Qt.AlignCenter)
         tagline_font = QFont()
         tagline_font.setPointSize(11)

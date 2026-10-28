@@ -243,8 +243,8 @@ One row per keyword per sample - ready for `pivot_wider()` in R:
 
 | sample_id | sample_name | keyword_name | keyword_value |
 |-----------|-------------|--------------|---------------|
-| 44 | A5 M5.fcs | Mouse # | 674 |
-| 44 | A5 M5.fcs | Tumor | C |
+| 1 | Sample_01.fcs | Mouse # | 101 |
+| 1 | Sample_01.fcs | Group | A |
 
 ### Keywords_Wide (Optional)
 One row per sample with keywords as columns.
@@ -360,4 +360,4 @@ flowkit/
 
 ## License
 
-MIT License
+GPL-3.0-or-later. See [LICENSE](../LICENSE).

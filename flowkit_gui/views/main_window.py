@@ -2780,10 +2780,10 @@ class MainWindow(QMainWindow):
             self,
             "About Flow Harvest",
             "Flow Harvest v0.1.0\n\n"
-            "Your daily dose of flow.\n\n"
-            "A tool for extracting and analyzing\n"
-            "flow cytometry data from FlowJo workspaces.\n\n"
-            "Built with FlowKit and PyQt5."
+            "Export frequencies and MFIs from\n"
+            "FlowJo workspaces into tidy tables.\n\n"
+            "Built with FlowKit and PyQt5.\n"
+            "Not affiliated with or endorsed by FlowJo or BD."
         )
 
     def _on_theme_changed(self, mode: ThemeMode):

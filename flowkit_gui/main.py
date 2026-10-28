@@ -1,5 +1,5 @@
 """
-FlowKit GUI - Main entry point.
+Flow Harvest - Main entry point.
 
 A tool for extracting and analyzing flow cytometry data from FlowJo workspaces.
 """
@@ -16,7 +16,7 @@ def ensure_dependencies():
     Check for and install missing optional dependencies.
 
     This ensures packages like natsort are available even if the user
-    hasn't updated their environment after a FlowKit GUI update.
+    hasn't updated their environment after a Flow Harvest update.
     """
     import subprocess
 
@@ -90,7 +90,7 @@ def _install_global_exception_handler(app):
         error_summary = f"{exc_type.__name__}: {exc_value}"
 
         error_details = (
-            f"FlowKit GUI Crash Report\n"
+            f"Flow Harvest Crash Report\n"
             f"{'=' * 60}\n"
             f"Time: {timestamp}\n"
             f"Version: {app.applicationVersion()}\n"
@@ -122,14 +122,14 @@ def _install_global_exception_handler(app):
         from PyQt5.QtCore import Qt, QTimer
 
         dialog = QDialog()
-        dialog.setWindowTitle("FlowKit GUI — Unexpected Error")
+        dialog.setWindowTitle("Flow Harvest — Unexpected Error")
         dialog.setModal(True)
         dialog.resize(650, 450)
 
         layout = QVBoxLayout(dialog)
 
         msg = QLabel(
-            f"<b>FlowKit GUI encountered an unexpected error:</b><br><br>"
+            f"<b>Flow Harvest encountered an unexpected error:</b><br><br>"
             f"<code>{error_summary}</code><br><br>"
             f"Error details saved to:<br>"
             f"<code>{crash_log_path}</code>"
