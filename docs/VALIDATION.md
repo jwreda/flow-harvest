@@ -43,7 +43,7 @@ The comparison script flags 5 measurements as "Concerning". Three of them are th
 - **Small gates.** The rare population had a median of 181 events per sample, and as few as 26. The smallest T cell gates held 0 to 4 events in six samples. At those counts, a handful of cells moves a mean.
 - **Negative values after spectral unmixing.** 28–49% of Ki67 events were negative in every sample, which is typical for spectral data. FlowJo computes statistics in its biexponential display space. Flow Harvest computes on the linear values. Both are defensible, and they diverge most when many values sit below zero. We think this explains the Ki67 difference.
 - **The frequency difference.** A few cells in a gate as small as 26 events. We suspect it is downstream of boundary events, cells sitting on a gate edge that the two tools place on different sides, but we have not confirmed this.
-- **Not a compensation mix-up.** The one sample flagged as an outlier (z = 2.58) used the same compensation matrix as the other 18. Its differences sat in the same tiny gates.
+- **Not a compensation mix-up.** The one sample the comparison script flagged as an outlier used the same compensation matrix as the other 18. Its differences sat in the same tiny gates.
 - **What we built in response.** Flow Harvest now lists gates under 10 events on the Warnings sheet of the export ("statistics are unreliable") and notes gates under 50 in its log. When you turn on geometric MFI, it warns that the value can't be computed for populations with negative values. Those cells are left blank.
 
 ## Method
