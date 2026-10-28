@@ -85,10 +85,14 @@ class XLSXExporter:
     Generates sheets:
     1. Gating_Strategy - Hierarchical gate structure with full paths
     2. Keywords - Tidy format (one row per keyword per sample)
-    3. Keywords_Wide (optional) - Wide format pivoted by Mouse/Organ
-    4. Statistics_Selected - MFI for user-selected markers only
-    5. Statistics_All - MFI for all markers
-    6. Warnings (if any) - List of calculation errors/warnings
+    3. Keywords_Wide (optional) - One row per sample, keywords as columns
+    4. Compensation - Which matrix was applied to each sample
+    5. Counts_Selected / Frequencies_Selected / MFI_Selected (and _All variants)
+       - Gate statistics for the selected gates and markers (or all)
+    6. *_Tidy variants (optional) - Long format of the count and frequency sheets
+    7. Freq_of_<gate> - Frequencies normalized to each reference gate
+    8. Concatenated_Selected / Concatenated_All - Everything in one table, one row per sample
+    9. Warnings (if any) - List of calculation errors/warnings
     """
 
     def __init__(

@@ -1,5 +1,5 @@
 """
-Theme Manager for FlowKit GUI.
+Theme Manager for Flow Harvest.
 
 Provides centralized theme management with:
 - Light/Dark/System mode support

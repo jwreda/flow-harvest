@@ -1,5 +1,5 @@
 """
-Main Window - Primary application window for FlowKit GUI.
+Main Window - Primary application window for Flow Harvest.
 
 This module provides the main application window with:
 - Menu bar and toolbar
@@ -1047,7 +1047,7 @@ class MainWindow(QMainWindow):
 
         self._geomean_check = QCheckBox("Geometric Mean")
         self._geomean_check.setToolTip(
-            "Samples with negative fluorescence values will show NA. "
+            "Samples with negative fluorescence values are left blank. "
             "Geometric mean is undefined for non-positive numbers."
         )
         self._geomean_check.stateChanged.connect(self._on_geomean_toggled)
@@ -2268,7 +2268,7 @@ class MainWindow(QMainWindow):
                 "where all values are positive. Flow Harvest calculates on raw linear "
                 "values, which is mathematically standard but produces different "
                 "results for populations with negative values.\n\n"
-                "For such populations, gMFI will show as NA since geometric mean "
+                "For such populations, gMFI is left blank since geometric mean "
                 "is undefined for non-positive values.\n\n"
                 "Consider using Median instead for more robust and comparable results."
             )
@@ -2762,7 +2762,7 @@ class MainWindow(QMainWindow):
 
     def _load_system_keywords_settings(self) -> set:
         """Load allowed system keywords from QSettings."""
-        settings = QSettings('FlowKit', 'FlowKitGUI')
+        settings = QSettings('FlowHarvest', 'FlowHarvest')
         allowed = settings.value('system_keywords/allowed', ['$VOL'])
         if isinstance(allowed, str):
             allowed = [allowed]
@@ -2770,7 +2770,7 @@ class MainWindow(QMainWindow):
 
     def _save_system_keywords_settings(self, keywords: set) -> None:
         """Save allowed system keywords to QSettings."""
-        settings = QSettings('FlowKit', 'FlowKitGUI')
+        settings = QSettings('FlowHarvest', 'FlowHarvest')
         settings.setValue('system_keywords/allowed', list(keywords))
         logger.info(f"Saved system keywords settings: {keywords}")
 
@@ -2829,7 +2829,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Flow Harvest")
-    app.setOrganizationName("FlowKit")
+    app.setOrganizationName("FlowHarvest")
 
     window = MainWindow()
     window.show()

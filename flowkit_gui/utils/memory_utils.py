@@ -1,4 +1,4 @@
-"""Memory safety utilities for FlowKit GUI."""
+"""Memory safety utilities for Flow Harvest."""
 import logging
 import psutil
 

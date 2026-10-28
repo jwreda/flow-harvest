@@ -54,7 +54,7 @@ Tools: Claude Code, mostly with Claude Opus 4.5 and Opus 4.6 (January to March 2
 
 ## Install and run
 
-Requires Python 3.9+ (3.11 recommended).
+Requires Python 3.10+ (3.11 recommended).
 
 ```bash
 git clone https://github.com/jwreda/flow-harvest.git

@@ -1,5 +1,5 @@
 """
-Default configuration values for FlowKit GUI.
+Default configuration values for Flow Harvest.
 
 This module centralizes configurable values that were previously hardcoded,
 making the application work with any WSP/FCS files.

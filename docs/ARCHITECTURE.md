@@ -1,4 +1,4 @@
-# Architecture (originally the FlowKit GUI README)
+# Architecture
 
 A Python GUI application for extracting gating strategies and sample keywords from FlowJo workspace (WSP) files and exporting analysis results to tidy XLSX format.
 
@@ -83,7 +83,7 @@ python -m flowkit_gui.main
 
 ## What This Tool Does
 
-FlowKit GUI bridges the gap between FlowJo's excellent visual gating interface and downstream statistical analysis. It:
+Flow Harvest bridges the gap between FlowJo's excellent visual gating interface and downstream statistical analysis. It:
 
 1. **Reads FlowJo Workspaces**: Parses WSP files to extract the complete gating hierarchy you've defined in FlowJo
 2. **Applies Gates to FCS Data**: Uses the FlowKit library to calculate which events fall within each gate
@@ -249,8 +249,20 @@ One row per keyword per sample - ready for `pivot_wider()` in R:
 ### Keywords_Wide (Optional)
 One row per sample with keywords as columns.
 
-### Statistics_Selected / Statistics_All
-MFI statistics for selected or all channels, with gate hierarchy preserved.
+### Compensation
+Which compensation matrix (if any) was applied to each sample.
+
+### Counts_*, Frequencies_*, MFI_*
+Gate statistics for the selected gates and markers (`_Selected`) or for every gate and channel (`_All`), one row per sample and one column per gate or gate × marker. Optional `_Tidy` variants give the same data in long format.
+
+### Freq_of_<gate>
+One sheet per reference gate, with every descendant gate's frequency expressed relative to it.
+
+### Concatenated_Selected / Concatenated_All
+Everything selected in one table, one row per sample.
+
+### Warnings
+Gates with fewer than 10 events, failed calculations, and other notes from the export.
 
 ---
 
@@ -333,7 +345,7 @@ flowkit/
 │   │   ├── timing.py                        # Performance timing utilities
 │   │   └── wait_cursor.py                   # Context manager for busy cursor
 │   └── resources/
-│       ├── icons/                           # 23 Lucide SVG icons (stroke="currentColor")
+│       ├── icons/                           # 23 SVG icons based on Lucide (ISC) (stroke="currentColor")
 │       └── styles/
 │           └── base.qss                     # Base QSS stylesheet
 ├── tests/                                   # pytest test suite (50+ tests)

@@ -1,6 +1,6 @@
 # Unmixing vs Compensation in Flow Cytometry
 
-This document explains the distinction between spectral unmixing and traditional compensation, how they relate to each other in spectral flow cytometry workflows, and how FlowKit GUI handles both.
+This document explains the distinction between spectral unmixing and traditional compensation, how they relate to each other in spectral flow cytometry workflows, and how Flow Harvest handles both.
 
 ## Overview
 
@@ -66,11 +66,11 @@ Raw acquisition → Spectral Unmixing (Aurora) → Unmixed FCS files
                                               Analysis results
 ```
 
-## FlowKit GUI Handling
+## Flow Harvest Handling
 
 ### FCS File Selection (Processing Level)
 
-When loading a workspace, FlowKit GUI identifies FCS files by their directory location:
+When loading a workspace, Flow Harvest identifies FCS files by their directory location:
 
 | Directory Pattern | Processing Level | Description |
 |-------------------|------------------|-------------|
@@ -78,11 +78,11 @@ When loading a workspace, FlowKit GUI identifies FCS files by their directory lo
 | `/Compensated/` | Compensated | Pre-compensated data |
 | `/Raw/` | Raw | Unprocessed data |
 
-**Default behavior:** FlowKit GUI prefers Unmixed files when available.
+**Default behavior:** Flow Harvest prefers Unmixed files when available.
 
 ### Compensation from WSP
 
-FlowKit GUI extracts compensation information from the WSP file:
+Flow Harvest extracts compensation information from the WSP file:
 
 1. **Global matrices**: Compensation matrices defined at the workspace level
 2. **Per-sample assignments**: Which matrix is assigned to each sample
@@ -102,7 +102,7 @@ In the sample list, compensation status is shown with colored dots:
 
 For unmixed data without additional compensation in FlowJo, showing "missing" compensation is misleading. The data is valid—it simply doesn't need further compensation.
 
-FlowKit GUI distinguishes between:
+Flow Harvest distinguishes between:
 - **No compensation**: Sample has no matrix assigned (valid state)
 - **Compensation error**: Could not read expected compensation (problem state)
 
@@ -111,16 +111,16 @@ FlowKit GUI distinguishes between:
 ### Scenario 1: Pure Unmixed Data
 - FCS files are in `/Unmixed/` folder
 - WSP contains gates but no compensation matrices
-- FlowKit GUI shows gray dots (no compensation needed)
+- Flow Harvest shows gray dots (no compensation needed)
 
 ### Scenario 2: Unmixed + Compensation
 - FCS files are in `/Unmixed/` folder
 - WSP contains compensation matrix(es)
-- FlowKit GUI shows colored dots matching FlowJo matrix colors
+- Flow Harvest shows colored dots matching FlowJo matrix colors
 
 ### Scenario 3: Multiple Compensation Matrices
 - Different samples may use different compensation matrices
-- FlowKit GUI uses per-sample WSP assignments
+- Flow Harvest uses per-sample WSP assignments
 - Color-coded dots help identify which samples use which matrix
 
 ## Technical Reference

@@ -1,5 +1,5 @@
 """
-Logging Configuration - Setup logging for FlowKit GUI.
+Logging Configuration - Setup logging for Flow Harvest.
 
 Provides:
 - Console handler (INFO level) for immediate feedback
@@ -13,7 +13,7 @@ from pathlib import Path
 
 def setup_logging(log_file: str = "flowkit_debug.log") -> logging.Logger:
     """
-    Configure logging for FlowKit GUI.
+    Configure logging for Flow Harvest.
 
     Args:
         log_file: Path to the debug log file

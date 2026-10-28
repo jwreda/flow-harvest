@@ -1,5 +1,5 @@
 """
-Config module for FlowKit GUI.
+Config module for Flow Harvest.
 
 Provides centralized configuration values and constants.
 """

@@ -1,5 +1,5 @@
 """
-Settings Manager for FlowKit GUI.
+Settings Manager for Flow Harvest.
 
 Provides persistent settings storage using QSettings with:
 - Theme preferences
@@ -20,9 +20,9 @@ class SettingsManager:
     Manages persistent application settings using QSettings.
 
     Settings are stored in:
-    - macOS: ~/Library/Preferences/com.flowkit.gui.plist
-    - Windows: Registry HKEY_CURRENT_USER\\Software\\FlowKit\\FlowKit GUI
-    - Linux: ~/.config/FlowKit/FlowKit GUI.conf
+    - macOS: ~/Library/Preferences/io.github.jwreda.FlowHarvest.plist
+    - Windows: Registry HKEY_CURRENT_USER\\Software\\FlowHarvest\\FlowHarvest
+    - Linux: ~/.config/FlowHarvest/FlowHarvest.conf
     """
 
     # Settings keys
@@ -46,7 +46,7 @@ class SettingsManager:
     _instance: Optional['SettingsManager'] = None
 
     def __init__(self):
-        self._settings = QSettings("FlowKit", "FlowKit GUI")
+        self._settings = QSettings("FlowHarvest", "FlowHarvest")
 
     @classmethod
     def instance(cls) -> 'SettingsManager':
