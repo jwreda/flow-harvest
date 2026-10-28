@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec file for FlowJoe (FlowKit GUI) macOS .app bundle."""
+"""PyInstaller spec file for Flow Harvest (FlowKit GUI) macOS .app bundle."""
 
 import os
 import site
@@ -10,7 +10,7 @@ block_cipher = None
 ROOT = Path(SPECPATH)
 
 a = Analysis(
-    [str(ROOT / 'run_flowjoe.py')],
+    [str(ROOT / 'run_flow_harvest.py')],
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
@@ -101,7 +101,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='FlowJoe',
+    name='FlowHarvest',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -122,16 +122,16 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='FlowJoe',
+    name='FlowHarvest',
 )
 
 app = BUNDLE(
     coll,
-    name='FlowJoe.app',
+    name='Flow Harvest.app',
     icon=None,
-    bundle_identifier='io.flowkit.flowjoe',
+    bundle_identifier='io.flowkit.flowharvest',
     info_plist={
-        'CFBundleDisplayName': 'FlowJoe',
+        'CFBundleDisplayName': 'Flow Harvest',
         'CFBundleShortVersionString': '0.1.0',
         'CFBundleVersion': '0.1.0',
         'NSHighResolutionCapable': True,

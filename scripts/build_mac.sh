@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Build FlowJoe macOS .app bundle
+# Build Flow Harvest macOS .app bundle
 # Usage: ./scripts/build_mac.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,7 +9,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-echo "=== Building FlowJoe.app ==="
+echo "=== Building Flow Harvest.app ==="
 echo "Project: $PROJECT_DIR"
 echo ""
 
@@ -28,13 +28,13 @@ pyinstaller flowkit_gui.spec --noconfirm
 
 echo ""
 echo "=== Build complete ==="
-echo "App bundle: dist/FlowJoe.app"
+echo "App bundle: dist/Flow Harvest.app"
 echo ""
 
 # Ad-hoc sign the app
 echo "Signing with ad-hoc identity..."
-codesign --force --deep --sign - "dist/FlowJoe.app"
+codesign --force --deep --sign - "dist/Flow Harvest.app"
 echo "Signing complete."
 
 echo ""
-echo "To test: open dist/FlowJoe.app"
+echo 'To test: open "dist/Flow Harvest.app"'

@@ -397,12 +397,12 @@ class LoadingDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    """Main application window for FlowJoe."""
+    """Main application window for Flow Harvest."""
 
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("FlowJoe - Flow Cytometry Data Export")
+        self.setWindowTitle("Flow Harvest - Flow Cytometry Data Export")
         self.setMinimumSize(1200, 800)
 
         # Models
@@ -2262,10 +2262,10 @@ class MainWindow(QMainWindow):
                 self,
                 "Geometric Mean (gMFI) - Important Notice",
                 "Geometric Mean Fluorescent Intensity (gMFI) values calculated by "
-                "FlowJoe will NOT match FlowJo for any marker where negative "
+                "Flow Harvest will NOT match FlowJo for any marker where negative "
                 "fluorescence values are present.\n\n"
                 "FlowJo calculates gMFI in biexponential-transformed 'graph space' "
-                "where all values are positive. FlowJoe calculates on raw linear "
+                "where all values are positive. Flow Harvest calculates on raw linear "
                 "values, which is mathematically standard but produces different "
                 "results for populations with negative values.\n\n"
                 "For such populations, gMFI will show as NA since geometric mean "
@@ -2778,8 +2778,8 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About FlowJoe",
-            "FlowJoe v0.1.0\n\n"
+            "About Flow Harvest",
+            "Flow Harvest v0.1.0\n\n"
             "Your daily dose of flow.\n\n"
             "A tool for extracting and analyzing\n"
             "flow cytometry data from FlowJo workspaces.\n\n"
@@ -2828,7 +2828,7 @@ def main():
     from PyQt5.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
-    app.setApplicationName("FlowJoe")
+    app.setApplicationName("Flow Harvest")
     app.setOrganizationName("FlowKit")
 
     window = MainWindow()

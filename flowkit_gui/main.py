@@ -186,7 +186,7 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("FlowJoe")
+    app.setApplicationName("Flow Harvest")
     app.setOrganizationName("FlowKit")
     app.setOrganizationDomain("flowkit.io")
     app.setApplicationVersion("0.1.0")

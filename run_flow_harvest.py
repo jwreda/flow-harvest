@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for FlowJoe (FlowKit GUI) - used by PyInstaller bundle."""
+"""Entry point for Flow Harvest (FlowKit GUI) - used by PyInstaller bundle."""
 import sys
 import os
 
