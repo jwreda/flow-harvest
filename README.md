@@ -36,7 +36,7 @@ We compared the frequencies and the mean and median MFIs from one spectral exper
 
 Before the scripted comparison, we also spot-checked by hand: exporting measurements from both tools, graphing them by group, and confirming that the rank order of mice was consistent for a given parameter.
 
-Digging this deep also revealed intricacies and assumptions in FlowJo itself, such as computing statistics in its display space.
+Digging into this also taught us things about FlowJo that are documented but easy to miss, such as that its statistics come from events binned in display space.
 
 267 automated tests: 258 pass, and 9 are skipped until example data is public.
 
