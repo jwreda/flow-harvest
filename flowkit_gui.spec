@@ -129,7 +129,7 @@ app = BUNDLE(
     coll,
     name='Flow Harvest.app',
     icon=None,
-    bundle_identifier='io.flowkit.flowharvest',
+    bundle_identifier='io.github.jwreda.flowharvest',
     info_plist={
         'CFBundleDisplayName': 'Flow Harvest',
         'CFBundleShortVersionString': '0.1.0',

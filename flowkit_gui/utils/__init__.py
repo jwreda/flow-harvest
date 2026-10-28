@@ -1,4 +1,4 @@
-"""Utility functions for FlowKit GUI"""
+"""Utility functions for Flow Harvest"""
 
 from .mfi_calculations import calculate_mean, calculate_median, calculate_geometric_mean
 from .logging_config import setup_logging, get_logger

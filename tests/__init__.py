@@ -1,1 +1,1 @@
-"""Tests for FlowKit GUI"""
+"""Tests for Flow Harvest"""

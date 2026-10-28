@@ -203,7 +203,7 @@ class TestGateMarkerMatrixDisambiguation:
 
         assert model.headerData(0, Qt.Vertical, Qt.DisplayRole) == "CD4+"
 
-    def test_colleens_example(self, qapp):
+    def test_reporter_under_every_population(self, qapp):
         """Test Collaborator's example: Reporter+ under every population gate."""
         model = GateMarkerMatrixModel()
         gates = [

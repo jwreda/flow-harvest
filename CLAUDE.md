@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-FlowKit GUI is a PyQt5 application for flow cytometry data analysis. It wraps the FlowKit library to parse FlowJo workspace (WSP) files, display gating hierarchies, and export statistics to Excel.
+Flow Harvest (Python package `flowkit_gui`) is a PyQt5 application for flow cytometry data analysis. It wraps the FlowKit library to parse FlowJo workspace (WSP) files, display gating hierarchies, and export statistics to Excel.
 
 ## Quick Start Commands
 
@@ -13,7 +13,8 @@ source venv/bin/activate
 # Run the application
 python -m flowkit_gui.main
 
-# Run all tests
+# Install with test dependencies, then run all tests
+pip install -e ".[dev]"
 pytest
 
 # Run tests with verbose output
@@ -67,7 +68,7 @@ pytest -v
 - **wait_cursor.py**: Context manager for busy cursor display
 
 ### Resources (flowkit_gui/resources/)
-- **icons/**: 23 Lucide SVG icons (stroke="currentColor"), auto-tinted via `get_icon()`
+- **icons/**: 23 SVG icons based on Lucide (ISC, see `flowkit_gui/resources/icons/LICENSE`) (stroke="currentColor"), auto-tinted via `get_icon()`
 - **styles/**: `base.qss` - base QSS stylesheet for theming
 
 ## Key Technical Details
@@ -93,8 +94,7 @@ gate = workspace.get_gate(sample_id, gate_name, gate_path=gate_path_tuple)
 The `Sample.get_custom_keywords()` method filters out system keywords (starting with `$`, `P1-P35`, `FSC`, etc.) to show only user-defined keywords like `Mouse #`, `Tumor`, `RT`.
 
 ### Test Data
-- WSP file: `example_workspace.wsp` (45MB, 72 samples referenced)
-- FCS files: `A1 M1.fcs`, `A2 M2.fcs`, `A3 M3.fcs` (3 available locally)
+Some tests in `tests/test_workspace_model.py` need a real FlowJo workspace named `example_workspace.wsp` in the repo root, with its FCS files alongside. It is not distributed; those tests are skipped when it is absent.
 
 ## Testing
 
@@ -112,11 +112,7 @@ The xlsx_exporter tests use a MockWorkspaceModel to avoid FlowKit dependency in 
 
 ## Export Sheets
 
-1. **Gating_Strategy**: Full gate paths, types, parameters
-2. **Keywords**: Tidy format (one row per keyword per sample)
-3. **Keywords_Wide** (optional): Pivot format with keywords as columns
-4. **Statistics_Selected**: MFI for user-selected markers
-5. **Statistics_All**: MFI for all channels
+See the `XLSXExporter` docstring in `flowkit_gui/exporters/xlsx_exporter.py` for the current list. In short: Gating_Strategy, Keywords (and Keywords_Wide), Compensation, Counts_* / Frequencies_* / MFI_* for selected or all gates, optional *_Tidy variants, Freq_of_<gate> sheets for reference gates, Concatenated_* (everything in one table), and Warnings.
 
 ## Common Issues
 

@@ -1,5 +1,5 @@
 """
-Animation utilities for FlowKit GUI.
+Animation utilities for Flow Harvest.
 
 Provides animated widgets for visual effects:
 - AnimatedButton: Shadow animation on hover

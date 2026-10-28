@@ -913,7 +913,7 @@ class TestSanitizeSheetName:
         assert result == ""
 
     def test_realistic_gate_with_colon(self):
-        """Simulates the exact crash scenario Colleen reported."""
+        """Simulates a crash scenario reported by a user."""
         gate_name = "CD45+: Activated"
         result = XLSXExporter._sanitize_sheet_name(f"Freq_of_{gate_name}")
         assert len(result) <= 31

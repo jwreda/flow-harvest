@@ -1,5 +1,5 @@
 """
-Dark theme color palette for FlowKit GUI.
+Dark theme color palette for Flow Harvest.
 
 This palette defines all colors used in the dark theme,
 with a Deep Rose accent color scheme.

@@ -1,89 +1,16 @@
-# Architecture (originally the FlowKit GUI README)
+# Architecture
 
 A Python GUI application for extracting gating strategies and sample keywords from FlowJo workspace (WSP) files and exporting analysis results to tidy XLSX format.
 
-## Installation (macOS)
+## Installation
 
-### Step 1: Install Homebrew (if not already installed)
-
-Open Terminal and run:
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
-Follow the prompts. After installation, add Homebrew to your PATH if instructed.
-
-### Step 2: Install Python
-
-macOS comes with Python, but we recommend installing a recent version via Homebrew:
-```bash
-brew install python@3.11
-```
-
-Verify installation:
-```bash
-python3 --version  # Should show 3.11.x or higher
-```
-
-### Step 3: Clone or Download the Project
-
-```bash
-cd ~/Documents  # or wherever you keep projects
-git clone <repository-url> flowkit
-cd flowkit
-```
-
-Or if you have the folder already, just navigate to it:
-```bash
-cd "/path/to/flowkit"
-```
-
-### Step 4: Create and Activate Virtual Environment
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate it (you'll need to do this each time you open a new terminal)
-source venv/bin/activate
-
-# Your prompt should now show (venv) at the beginning
-```
-
-### Step 5: Install Dependencies
-
-```bash
-# Install the package and all dependencies
-pip install -e .
-
-# For development (includes pytest for running tests)
-pip install -e ".[dev]"
-```
-
-### Step 6: Run the Application
-
-```bash
-# Make sure venv is activated (you should see (venv) in your prompt)
-source venv/bin/activate
-
-# Run the GUI
-python -m flowkit_gui.main
-```
-
-### Quick Start (after initial setup)
-
-Once installed, you only need these commands to run the app:
-```bash
-cd "/path/to/flowkit"
-source venv/bin/activate
-python -m flowkit_gui.main
-```
+See the [README](../README.md#install-and-run). This page covers how the code is organized and why.
 
 ---
 
 ## What This Tool Does
 
-FlowKit GUI bridges the gap between FlowJo's excellent visual gating interface and downstream statistical analysis. It:
+Flow Harvest bridges the gap between FlowJo's excellent visual gating interface and downstream statistical analysis. It:
 
 1. **Reads FlowJo Workspaces**: Parses WSP files to extract the complete gating hierarchy you've defined in FlowJo
 2. **Applies Gates to FCS Data**: Uses the FlowKit library to calculate which events fall within each gate
@@ -205,7 +132,6 @@ The application logs errors to `flowkit_debug.log` but continues processing when
 - **Scale Factors**: User-defined per-sample scaling for count data
 - **Volume Normalization**: Normalize counts by acquisition volume
 - **Batch Checkbox Toggling**: Select/deselect gates and markers in bulk
-- **Export NaN for Missing Gates**: Missing gate data exports as NaN instead of zeros
 - **Splash Screen**: Theme-aware startup splash with progress indication
 - **Window Geometry Persistence**: Remembers window size and position across sessions
 - **Mac .app Bundle**: PyInstaller-based macOS application packaging
@@ -222,7 +148,7 @@ The application logs errors to `flowkit_debug.log` but continues processing when
 4. **View Keywords**: Select samples from dropdown to view their keywords
 5. **Configure MFI**: Select which MFI metrics to calculate (Mean, Median, Geometric Mean)
 6. **Select Markers** (optional): Choose specific markers or leave blank for all
-7. **Export**: Click "Export XLSX" to generate the analysis file
+7. **Export**: Click "Export to XLSX" to generate the analysis file
 
 ---
 
@@ -243,14 +169,26 @@ One row per keyword per sample - ready for `pivot_wider()` in R:
 
 | sample_id | sample_name | keyword_name | keyword_value |
 |-----------|-------------|--------------|---------------|
-| 44 | A5 M5.fcs | Mouse # | 674 |
-| 44 | A5 M5.fcs | Tumor | C |
+| 1 | Sample_01.fcs | Mouse # | 101 |
+| 1 | Sample_01.fcs | Group | A |
 
 ### Keywords_Wide (Optional)
 One row per sample with keywords as columns.
 
-### Statistics_Selected / Statistics_All
-MFI statistics for selected or all channels, with gate hierarchy preserved.
+### Compensation
+Which compensation matrix (if any) was applied to each sample.
+
+### Counts_*, Frequencies_*, MFI_*
+Gate statistics for the selected gates and markers (`_Selected`) or for every gate and channel (`_All`), one row per sample and one column per gate or gate × marker. Optional `_Tidy` variants give the same data in long format.
+
+### Freq_of_<gate>
+One sheet per reference gate, with every descendant gate's frequency expressed relative to it.
+
+### Concatenated_Selected / Concatenated_All
+Everything selected in one table, one row per sample.
+
+### Warnings
+Gates with fewer than 10 events, failed calculations, and other notes from the export.
 
 ---
 
@@ -291,7 +229,7 @@ pytest tests/test_mfi_calculations.py -v  # Specific test file
 ## Project Structure
 
 ```
-flowkit/
+flow-harvest/
 ├── flowkit_gui/
 │   ├── main.py                              # Application entry point, global crash handler
 │   ├── config/
@@ -316,7 +254,7 @@ flowkit/
 │   │   └── splash_screen.py                 # Theme-aware startup splash screen
 │   ├── exporters/
 │   │   ├── xlsx_exporter.py                 # Multi-sheet Excel export with formatting
-│   │   └── export_config.py                 # ExportConfig dataclass (20 fields)
+│   │   └── export_config.py                 # ExportConfig dataclass
 │   ├── utils/
 │   │   ├── mfi_calculations.py              # Mean, median, geometric mean functions
 │   │   ├── theme.py                         # Theme loading, icon tinting, QSS application
@@ -333,17 +271,20 @@ flowkit/
 │   │   ├── timing.py                        # Performance timing utilities
 │   │   └── wait_cursor.py                   # Context manager for busy cursor
 │   └── resources/
-│       ├── icons/                           # 23 Lucide SVG icons (stroke="currentColor")
+│       ├── icons/                           # 23 SVG icons based on Lucide (ISC) (stroke="currentColor")
 │       └── styles/
 │           └── base.qss                     # Base QSS stylesheet
-├── tests/                                   # pytest test suite (50+ tests)
+├── tests/                                   # pytest test suite
 ├── scripts/
 │   └── build_mac.sh                         # PyInstaller build + ad-hoc codesign
 ├── run_flow_harvest.py                      # PyInstaller entry point wrapper
 ├── flowkit_gui.spec                         # PyInstaller spec for macOS .app
 ├── pyproject.toml
-├── CLAUDE.md                                # AI assistant instructions
-└── README.md                                # This file
+├── CITATION.cff
+├── LICENSE
+├── CLAUDE.md                                # Claude Code project notes
+├── docs/                                    # This page, VALIDATION.md, unmixing-vs-compensation.md
+└── README.md                                # Project overview
 ```
 
 ---
@@ -360,4 +301,4 @@ flowkit/
 
 ## License
 
-MIT License
+GPL-3.0-or-later. See [LICENSE](../LICENSE).

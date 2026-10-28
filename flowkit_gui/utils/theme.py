@@ -1,5 +1,5 @@
 """
-Theme utilities for FlowKit GUI.
+Theme utilities for Flow Harvest.
 
 Provides theme loading, font management, and icon utilities for the
 pink-accented modern UI theme with light/dark mode support.

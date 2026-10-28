@@ -1,5 +1,5 @@
 """
-FlowKit GUI - Main entry point.
+Flow Harvest - Main entry point.
 
 A tool for extracting and analyzing flow cytometry data from FlowJo workspaces.
 """
@@ -9,35 +9,6 @@ import platform
 
 # Minimum FlowKit version for full functionality
 MIN_FLOWKIT_VERSION = "1.0.0"
-
-
-def ensure_dependencies():
-    """
-    Check for and install missing optional dependencies.
-
-    This ensures packages like natsort are available even if the user
-    hasn't updated their environment after a FlowKit GUI update.
-    """
-    import subprocess
-
-    dependencies = [
-        ("natsort", "natsort>=8.0.0"),  # (import_name, pip_package)
-    ]
-
-    for import_name, pip_package in dependencies:
-        try:
-            __import__(import_name)
-        except ImportError:
-            print(f"Installing missing dependency: {pip_package}")
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", pip_package],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                print(f"Successfully installed {pip_package}")
-            except subprocess.CalledProcessError as e:
-                print(f"Warning: Failed to install {pip_package}: {e}")
 
 
 def check_flowkit_version():
@@ -90,7 +61,7 @@ def _install_global_exception_handler(app):
         error_summary = f"{exc_type.__name__}: {exc_value}"
 
         error_details = (
-            f"FlowKit GUI Crash Report\n"
+            f"Flow Harvest Crash Report\n"
             f"{'=' * 60}\n"
             f"Time: {timestamp}\n"
             f"Version: {app.applicationVersion()}\n"
@@ -122,14 +93,14 @@ def _install_global_exception_handler(app):
         from PyQt5.QtCore import Qt, QTimer
 
         dialog = QDialog()
-        dialog.setWindowTitle("FlowKit GUI — Unexpected Error")
+        dialog.setWindowTitle("Flow Harvest — Unexpected Error")
         dialog.setModal(True)
         dialog.resize(650, 450)
 
         layout = QVBoxLayout(dialog)
 
         msg = QLabel(
-            f"<b>FlowKit GUI encountered an unexpected error:</b><br><br>"
+            f"<b>Flow Harvest encountered an unexpected error:</b><br><br>"
             f"<code>{error_summary}</code><br><br>"
             f"Error details saved to:<br>"
             f"<code>{crash_log_path}</code>"
@@ -171,10 +142,6 @@ def _install_global_exception_handler(app):
 
 def main():
     """Application entry point."""
-    # Ensure all dependencies are installed before importing modules that need them
-    if not getattr(sys, 'frozen', False):
-        ensure_dependencies()
-
     from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import Qt, QTimer, QEventLoop
     from .views.main_window import MainWindow
@@ -187,8 +154,8 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Flow Harvest")
-    app.setOrganizationName("FlowKit")
-    app.setOrganizationDomain("flowkit.io")
+    app.setOrganizationName("FlowHarvest")
+    app.setOrganizationDomain("jwreda.github.io")
     app.setApplicationVersion("0.1.0")
 
     # Apply the pink theme with light/dark mode support
