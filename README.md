@@ -74,10 +74,6 @@ Flow Harvest is built on [FlowKit](https://github.com/whitebeardlabs/flowkit), w
 - **Joe Reda** ([ORCID 0000-0002-9413-5111](https://orcid.org/0000-0002-9413-5111)) — design, development direction, validation
 - **Colleen Foley**, Pritzker School of Molecular Engineering, University of Chicago ([ORCID 0009-0002-1636-7205](https://orcid.org/0009-0002-1636-7205)) — co-design, primary research user, validation
 
-## Acknowledgments
-
-The idea of using FlowKit to pull statistics out of FlowJo workspaces through a simple GUI came from **Lorenzo Netti**, who built earlier, simpler tools along those lines. Flow Harvest was developed independently, but it started from his insight.
-
 ## Citation
 
 If you use Flow Harvest in your research, please cite it using the "Cite this repository" button on GitHub (from `CITATION.cff`).
