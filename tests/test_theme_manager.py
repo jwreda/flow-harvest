@@ -244,4 +244,4 @@ class TestThemeUtilities:
         path = get_resources_path()
         assert path.exists()
         assert (path / "styles").exists()
-        assert (path / "fonts").exists()
+        assert (path / "icons").exists()
