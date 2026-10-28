@@ -1,6 +1,6 @@
 # Validation against FlowJo
 
-We exported every population frequency and MFI from one spectral flow cytometry experiment (19 samples) twice: once from FlowJo, and once from Flow Harvest, using the same .wsp workspace and .fcs files. We then compared the two exports measurement by measurement across the 19 samples. This page reports aggregate results only: no sample names, gate paths or event-level data.
+We exported the population frequencies and the mean and median MFIs from one spectral flow cytometry experiment (19 samples) twice: once from FlowJo, and once from Flow Harvest, using the same .wsp workspace and .fcs files. Geometric MFI was not compared. We then compared the two exports measurement by measurement across the 19 samples. This page reports aggregate results only: no sample names, gate paths or event-level data.
 
 ## Summary
 
@@ -9,7 +9,7 @@ We exported every population frequency and MFI from one spectral flow cytometry 
 | Measurements compared, each across 19 samples | 253 |
 | Pearson r ≥ 0.99 | 234 (92%) |
 | Pearson r ≥ 0.999 (of 250 where r is defined) | 191 |
-| Real disagreements | 2, both in one rare population |
+| Clear disagreements (r < 0.90) | 2, both in one rare population |
 
 Pearson r tells you whether the two tools rise and fall together across samples. It is not the same as exact agreement, so the comparison script also records the mean difference, the absolute difference and the RMSE for every measurement.
 
@@ -25,7 +25,7 @@ Tiers are assigned by r: Excellent ≥ 0.99, Good 0.95–0.99, Acceptable 0.90�
 | Median MFI | 19 | 0.99875 | 14 | 3 | 2 | 0 | 0 |
 | Mean MFI | 19 | 0.99835 | 15 | 1 | 2 | 1 | 0 |
 
-The 215 frequencies are about 72 populations, each expressed against three denominators (of live, of CD45+, of parent). That exercises Flow Harvest's anchor feature, but they are not 215 independent populations.
+The 215 frequencies cover about 72 populations, most expressed against all three denominators (of live, of CD45+, of parent). That exercises Flow Harvest's reference gate feature, but they are not 215 independent populations.
 
 ## The 19 below r = 0.99
 
@@ -36,18 +36,18 @@ The 215 frequencies are about 72 populations, each expressed against three denom
 | Acceptable | 6 | Mostly mean or median MFIs (Ki67, PD1, granzyme B) in small gates, plus two frequencies of a very rare subset (mean difference under 0.001 points). |
 | Good | 8 | MFIs and frequencies in small lymphocyte gates. |
 
-The comparison script flags 5 measurements as "Concerning". Three of them are the Identical cases above, where a correlation cannot be computed on a constant. That leaves two real disagreements.
+The comparison script flags 5 measurements as "Concerning". Three of them are the Identical cases above, where a correlation cannot be computed on a constant. That leaves two clear disagreements.
 
 ## Why they differ, and what changed
 
 - **Small gates.** The rare population had a median of 181 events per sample, and as few as 26. The smallest T cell gates held 0 to 4 events in six samples. At those counts, a handful of cells moves a mean.
-- **Negative values after spectral unmixing.** 28–49% of Ki67 events were negative in every sample, which is typical for spectral data. FlowJo computes statistics in its biexponential display space; Flow Harvest computes on the raw linear values. Both are defensible, and they diverge most when many values sit below zero. This explains the Ki67 difference.
+- **Negative values after spectral unmixing.** 28–49% of Ki67 events were negative in every sample, which is typical for spectral data. FlowJo computes statistics in its biexponential display space. Flow Harvest computes on the linear values. Both are defensible, and they diverge most when many values sit below zero. We think this explains the Ki67 difference.
 - **The frequency difference.** A few cells in a gate as small as 26 events. We suspect it is downstream of boundary events, cells sitting on a gate edge that the two tools place on different sides, but we have not confirmed this.
-- **Not compensation.** The one sample flagged as an outlier (z = 2.58) used the same compensation matrix as the other 18. Its differences sat in the same tiny gates.
-- **What we built in response.** Flow Harvest now warns on gates under 10 events ("statistics are unreliable"), notes gates under 50, and explains when a geometric MFI can't be computed instead of returning a blank.
+- **Not a compensation mix-up.** The one sample flagged as an outlier (z = 2.58) used the same compensation matrix as the other 18. Its differences sat in the same tiny gates.
+- **What we built in response.** Flow Harvest now lists gates under 10 events on the Warnings sheet of the export ("statistics are unreliable") and notes gates under 50 in its log. When you turn on geometric MFI, it warns that the value can't be computed for populations with negative values. Those cells are left blank.
 
 ## Method
 
-An R script pairs each FlowJo export column with its Flow Harvest counterpart, computes Pearson r, mean and absolute differences and RMSE across samples, and assigns tiers by r. Before the scripted comparison, we spot-checked by hand: exporting measurements from both tools, graphing them by group, and confirming that the rank order of mice was consistent for a given parameter.
+An R script pairs each FlowJo export column with its Flow Harvest counterpart, computes Pearson r, mean and absolute differences and RMSE across samples, and assigns tiers by r. The script is not in this repository. Before the scripted comparison, we spot-checked by hand: exporting measurements from both tools, graphing them by group, and confirming that the rank order of mice was consistent for a given parameter.
 
 The comparison data come from Colleen Foley's thesis research and are not public. The comparison script and the software were written with Claude Code; Joe Reda and Colleen Foley set what had to be compared, reviewed the results and investigated the disagreements.

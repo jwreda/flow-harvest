@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use Flow Harvest in your research, please cite it as below."
 title: "Flow Harvest"
-abstract: "Export frequencies and MFIs from FlowJo workspaces into tidy tables, fast and without crashes."
+abstract: "Export frequencies and MFIs from FlowJo workspaces into tidy tables, fast, even for large spectral experiments."
 type: software
 authors:
   - family-names: Reda
